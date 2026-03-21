@@ -1,3 +1,13 @@
+/*
+Copyright (c) 2026 Armand
+
+Aethe 2 is an experimental programming language implementation and all related source code,
+documentation, examples, and design materials in this repository are copyrighted by the author.
+
+All rights reserved unless otherwise stated in the accompanying license file.
+Unauthorized copying, modification, distribution, or commercial use is prohibited without prior written permission.
+*/
+
 #include <algorithm>
 #include <cctype>
 #include <iostream>
@@ -8,8 +18,12 @@
 #include <unordered_map>
 #include <vector>
 
+/** @brief Aethe 语言前端与运行时实现。 */
 namespace aethe {
 
+/**
+ * @brief 词法分析器产生的记号类型。
+ */
 enum class TokenType {
     IDENTIFIER,
     NUMBER,
@@ -18,18 +32,32 @@ enum class TokenType {
     END
 };
 
+/**
+ * @brief 词法记号，包含源码文本与从 1 开始的行号。
+ */
 struct Token {
     TokenType type;
     std::string text;
     int line;
 };
 
+/**
+ * @brief 将源码文本切分为记号序列。
+ */
 class Lexer {
 public:
+    /**
+     * @brief 基于给定源码缓冲区构造词法分析器。
+     * @param source 需要切分的完整源码文本。
+     */
     explicit Lexer(const std::string& source)
         : source_(source), position_(0), line_(1) {
     }
 
+    /**
+     * @brief 对整个源码缓冲区执行词法分析。
+     * @return 以 `TokenType::END` 结尾的记号序列。
+     */
     std::vector<Token> tokenize() {
         std::vector<Token> tokens;
 
@@ -220,7 +248,11 @@ private:
 };
 
 struct ObjectData;
+struct CallableData;
 
+/**
+ * @brief 解释器使用的运行时值容器。
+ */
 class Value {
 public:
     enum Type {
@@ -230,7 +262,8 @@ public:
         NIL,
         ARRAY,
         DICT,
-        OBJECT
+        OBJECT,
+        CALLABLE
     };
 
     Value();
@@ -241,7 +274,12 @@ public:
     explicit Value(const std::vector<Value>& value);
     explicit Value(const std::unordered_map<std::string, Value>& value);
     explicit Value(const std::shared_ptr<ObjectData>& value);
+    explicit Value(const std::shared_ptr<CallableData>& value);
 
+    /**
+     * @brief 计算当前值的真值。
+     * @return 当该值在运行时语义下被视为真时返回 `true`。
+     */
     bool isTruthy() const {
         switch (type) {
             case INT:
@@ -256,12 +294,18 @@ public:
                 return !asDict().empty();
             case OBJECT:
                 return objectValue.get() != 0;
+            case CALLABLE:
+                return callableValue.get() != 0;
             case NIL:
                 return false;
         }
         return false;
     }
 
+    /**
+     * @brief 返回当前值对外暴露的运行时类型名。
+     * @return `int`、`array` 等语言层类型名之一。
+     */
     std::string typeName() const {
         switch (type) {
             case INT:
@@ -276,17 +320,44 @@ public:
                 return "dict";
             case OBJECT:
                 return "object";
+            case CALLABLE:
+                return "callable";
             case NIL:
                 return "nil";
         }
         return "unknown";
     }
 
+    /**
+     * @brief 生成当前值的显示形式。
+     * @return 用于输出与诊断信息的字符串表示。
+     */
     std::string toString() const;
+    /**
+     * @brief 按运行时相等性语义比较两个值。
+     * @param other 需要比较的另一个值。
+     * @return 当两个值相等时返回 `true`。
+     */
     bool equals(const Value& other) const;
+    /**
+     * @brief 返回数组负载；若不存在则返回空视图。
+     * @return 只读数组负载。
+     */
     const std::vector<Value>& asArray() const;
+    /**
+     * @brief 返回可写数组负载；必要时自动分配。
+     * @return 可写数组负载。
+     */
     std::vector<Value>& mutableArray();
+    /**
+     * @brief 返回字典负载；若不存在则返回空视图。
+     * @return 只读字典负载。
+     */
     const std::unordered_map<std::string, Value>& asDict() const;
+    /**
+     * @brief 返回可写字典负载；必要时自动分配。
+     * @return 可写字典负载。
+     */
     std::unordered_map<std::string, Value>& mutableDict();
 
     Type type;
@@ -296,26 +367,27 @@ public:
     std::shared_ptr<std::vector<Value> > arrayValue;
     std::shared_ptr<std::unordered_map<std::string, Value> > dictValue;
     std::shared_ptr<ObjectData> objectValue;
+    std::shared_ptr<CallableData> callableValue;
 };
 
 Value::Value()
-    : type(NIL), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue() {
+    : type(NIL), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue() {
 }
 
 Value::Value(int value)
-    : type(INT), intValue(value), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue() {
+    : type(INT), intValue(value), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue() {
 }
 
 Value::Value(bool value)
-    : type(BOOL), intValue(0), boolValue(value), stringValue(), arrayValue(), dictValue(), objectValue() {
+    : type(BOOL), intValue(0), boolValue(value), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue() {
 }
 
 Value::Value(const std::string& value)
-    : type(STRING), intValue(0), boolValue(false), stringValue(value), arrayValue(), dictValue(), objectValue() {
+    : type(STRING), intValue(0), boolValue(false), stringValue(value), arrayValue(), dictValue(), objectValue(), callableValue() {
 }
 
 Value::Value(const char* value)
-    : type(STRING), intValue(0), boolValue(false), stringValue(value == 0 ? "" : value), arrayValue(), dictValue(), objectValue() {
+    : type(STRING), intValue(0), boolValue(false), stringValue(value == 0 ? "" : value), arrayValue(), dictValue(), objectValue(), callableValue() {
 }
 
 Value::Value(const std::vector<Value>& value)
@@ -325,7 +397,8 @@ Value::Value(const std::vector<Value>& value)
       stringValue(),
       arrayValue(new std::vector<Value>(value)),
       dictValue(),
-      objectValue() {
+      objectValue(),
+      callableValue() {
 }
 
 Value::Value(const std::unordered_map<std::string, Value>& value)
@@ -335,11 +408,12 @@ Value::Value(const std::unordered_map<std::string, Value>& value)
       stringValue(),
       arrayValue(),
       dictValue(new std::unordered_map<std::string, Value>(value)),
-      objectValue() {
+      objectValue(),
+      callableValue() {
 }
 
 Value::Value(const std::shared_ptr<ObjectData>& value)
-    : type(OBJECT), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(value) {
+    : type(OBJECT), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(value), callableValue() {
 }
 
 const std::vector<Value>& Value::asArray() const {
@@ -366,6 +440,9 @@ std::unordered_map<std::string, Value>& Value::mutableDict() {
     return *dictValue;
 }
 
+/**
+ * @brief 基于堆分配的对象实例，用于承载 `type` 值。
+ */
 struct ObjectData {
     explicit ObjectData(const std::string& type)
         : typeName(type), fields() {
@@ -443,6 +520,8 @@ std::string Value::toString() const {
             stream << "}";
             return stream.str();
         }
+        case CALLABLE:
+            return callableValue.get() == 0 ? "<pipe nil>" : "<pipe>";
     }
     return "nil";
 }
@@ -497,11 +576,16 @@ bool Value::equals(const Value& other) const {
                 }
             }
             return true;
+        case CALLABLE:
+            return callableValue.get() == other.callableValue.get();
     }
 
     return false;
 }
 
+/**
+ * @brief 所有表达式节点的基类。
+ */
 struct Expr {
     virtual ~Expr() {}
 };
@@ -583,6 +667,9 @@ struct PipelineExpr : Expr {
     std::vector<std::unique_ptr<Expr> > stages;
 };
 
+/**
+ * @brief 解析器与解释器共用的语句节点。
+ */
 struct Statement {
     enum Type {
         EXPR,
@@ -615,12 +702,65 @@ struct Statement {
     std::vector<std::vector<std::unique_ptr<Statement> > > armBodies;
 };
 
+struct PipeExpr : Expr {
+    PipeExpr(std::vector<std::string> parameterNames, std::vector<std::unique_ptr<Statement> > callableBody)
+        : params(std::move(parameterNames)), body(std::move(callableBody)) {
+    }
+
+    std::vector<std::string> params;
+    std::vector<std::unique_ptr<Statement> > body;
+};
+
+struct CallableData {
+    enum Kind {
+        PIPE_BODY,
+        BOUND,
+        CHAIN,
+        BRANCH,
+        GUARD
+    };
+
+    CallableData(std::vector<std::string> parameterNames,
+                 const std::vector<std::unique_ptr<Statement> >* callableBody,
+                 const std::unordered_map<std::string, Value>& capturedValues)
+        : kind(PIPE_BODY), params(std::move(parameterNames)), body(callableBody), captured(capturedValues), parts(), label("pipe") {
+    }
+
+    CallableData(Kind callableKind,
+                 std::vector<Value> storedParts,
+                 const std::string& callableLabel)
+        : kind(callableKind), params(), body(0), captured(), parts(std::move(storedParts)), label(callableLabel) {
+    }
+
+    Kind kind;
+    std::vector<std::string> params;
+    const std::vector<std::unique_ptr<Statement> >* body;
+    std::unordered_map<std::string, Value> captured;
+    std::vector<Value> parts;
+    std::string label;
+};
+
+Value::Value(const std::shared_ptr<CallableData>& value)
+    : type(CALLABLE), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(value) {
+}
+
+/**
+ * @brief Aethe 源码的递归下降解析器。
+ */
 class Parser {
 public:
+    /**
+     * @brief 基于现有记号缓冲区构造解析器。
+     * @param tokens 由词法分析器生成的记号序列。
+     */
     explicit Parser(const std::vector<Token>& tokens)
         : tokens_(tokens), position_(0) {
     }
 
+    /**
+     * @brief 解析完整程序。
+     * @return 顶层语句列表。
+     */
     std::vector<std::unique_ptr<Statement> > parseProgram() {
         std::vector<std::unique_ptr<Statement> > program;
         while (!isAtEnd()) {
@@ -1031,6 +1171,9 @@ private:
 
         if (matchType(TokenType::IDENTIFIER)) {
             const Token& token = previous();
+            if (token.text == "pipe") {
+                return parsePipeExpr();
+            }
             if (token.text == "true") {
                 return std::unique_ptr<Expr>(static_cast<Expr*>(new LiteralExpr(Value(true))));
             }
@@ -1081,6 +1224,12 @@ private:
         return std::unique_ptr<Expr>(static_cast<Expr*>(new DictExpr(std::move(entries))));
     }
 
+    std::unique_ptr<Expr> parsePipeExpr() {
+        std::vector<std::string> params = parseParameterNames();
+        std::vector<std::unique_ptr<Statement> > body = parseBlock();
+        return std::unique_ptr<Expr>(static_cast<Expr*>(new PipeExpr(std::move(params), std::move(body))));
+    }
+
     std::unique_ptr<Expr> wrapIntoStage(std::unique_ptr<Expr> value, const std::string& name) {
         std::unique_ptr<PipelineExpr> pipeline(new PipelineExpr(std::move(value)));
         std::vector<std::unique_ptr<Expr> > args;
@@ -1115,12 +1264,22 @@ struct BreakSignal {
 struct ContinueSignal {
 };
 
+/**
+ * @brief 执行已解析的 Aethe 程序，并维护 REPL 状态。
+ */
 class Interpreter {
 public:
+    /**
+     * @brief 初始化解释器，并创建全局作用域。
+     */
     Interpreter()
         : scopes_(1), flows_(), stages_(), types_(), callDepth_(0), loopDepth_(0) {
     }
 
+    /**
+     * @brief 在当前解释器状态上执行一段已解析程序。
+     * @param program 需要执行的语句列表。
+     */
     void executeProgram(const std::vector<std::unique_ptr<Statement> >& program) {
         for (size_t index = 0; index < program.size(); ++index) {
             registerTopLevelDefinition(*program[index]);
@@ -1381,6 +1540,10 @@ private:
             return Value(entries);
         }
 
+        if (const PipeExpr* pipe = dynamic_cast<const PipeExpr*>(expr)) {
+            return Value(std::shared_ptr<CallableData>(new CallableData(pipe->params, &pipe->body, captureVisibleVars())));
+        }
+
         if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
             return evalUnary(*unary, pipeInput);
         }
@@ -1454,6 +1617,9 @@ private:
                     return true;
                 }
             }
+            return false;
+        }
+        if (dynamic_cast<const PipeExpr*>(expr) != 0) {
             return false;
         }
         return false;
@@ -1564,11 +1730,13 @@ private:
 
         if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(call.callee.get())) {
             Value object = evalExpr(member->object.get(), pipeInput);
-            return invokeMethod(object, member->memberName, args);
+            if (object.type == Value::OBJECT && hasMethod(object.objectValue->typeName, member->memberName)) {
+                return invokeMethod(object, member->memberName, args);
+            }
+            return invokeCallableValue(readMember(object, member->memberName), args, "call");
         }
 
-        runtimeError("call target must be a flow, type, or method");
-        return Value();
+        return invokeCallableValue(evalExpr(call.callee.get(), pipeInput), args, "call");
     }
 
     Value evalPipeline(const PipelineExpr& pipeline) {
@@ -1620,6 +1788,67 @@ private:
             return Value(args[0].isTruthy());
         }
 
+        if (name == "type_of") {
+            if (args.size() != 1) {
+                runtimeError("type_of expects one argument");
+            }
+            return Value(args[0].typeName());
+        }
+
+        if (name == "input") {
+            if (args.size() > 1) {
+                runtimeError("input expects zero or one argument");
+            }
+            if (!args.empty()) {
+                std::cout << requireString(args[0], "input");
+                std::cout.flush();
+            }
+
+            std::string line;
+            if (!std::getline(std::cin, line)) {
+                return Value();
+            }
+            return Value(line);
+        }
+
+        if (name == "bind") {
+            if (args.empty()) {
+                runtimeError("bind expects a callable and optional bound arguments");
+            }
+            expectCallableValue(args[0], "bind");
+            return makeNativeCallable(CallableData::BOUND, args, "bind");
+        }
+
+        if (name == "chain") {
+            if (args.empty()) {
+                runtimeError("chain expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "chain");
+            }
+            return makeNativeCallable(CallableData::CHAIN, args, "chain");
+        }
+
+        if (name == "branch") {
+            if (args.empty()) {
+                runtimeError("branch expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "branch");
+            }
+            return makeNativeCallable(CallableData::BRANCH, args, "branch");
+        }
+
+        if (name == "guard") {
+            if (args.size() < 2 || args.size() > 3) {
+                runtimeError("guard expects predicate, true route, and optional false route");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "guard");
+            }
+            return makeNativeCallable(CallableData::GUARD, args, "guard");
+        }
+
         std::unordered_map<std::string, const Statement*>::const_iterator flowIt = flows_.find(name);
         if (flowIt != flows_.end()) {
             return invokeFlow(*flowIt->second, args, 0);
@@ -1645,17 +1874,18 @@ private:
         }
 
         if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(target)) {
-            return runNamedStage(identifier->name, input, std::vector<Value>());
+            return invokePipeCallable(Value(identifier->name), input, std::vector<Value>(), "pipeline target");
         }
 
         if (const CallExpr* call = dynamic_cast<const CallExpr*>(target)) {
+            const std::vector<Value> args = evalArgs(call->args);
             if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(call->callee.get())) {
-                return runNamedStage(identifier->name, input, evalArgs(call->args));
+                return invokePipeCallable(Value(identifier->name), input, args, "pipeline target");
             }
+            return invokePipeCallable(evalExpr(call->callee.get()), input, args, "pipeline target");
         }
 
-        runtimeError("pipeline target without '_' must be a callable or stage name");
-        return Value();
+        return invokePipeCallable(evalExpr(target), input, std::vector<Value>(), "pipeline target");
     }
 
     Value runNamedStage(const std::string& name, const Value& input, const std::vector<Value>& args) {
@@ -1822,6 +2052,30 @@ private:
             return Value(splitString(requireString(input, name), requireString(args[0], name)));
         }
 
+        if (name == "contains" || name == "has") {
+            expectArity(args, 1, name);
+            return Value(containsValue(input, args[0], name));
+        }
+
+        if (name == "starts_with") {
+            expectArity(args, 1, name);
+            return Value(stringsStartsWith(requireString(input, name), requireString(args[0], name)));
+        }
+
+        if (name == "ends_with") {
+            expectArity(args, 1, name);
+            return Value(stringsEndsWith(requireString(input, name), requireString(args[0], name)));
+        }
+
+        if (name == "replace") {
+            expectArity(args, 2, name);
+            const std::string from = requireString(args[0], name);
+            if (from.empty()) {
+                runtimeError("replace does not allow an empty search string");
+            }
+            return Value(replaceAll(requireString(input, name), from, requireString(args[1], name)));
+        }
+
         if (name == "join") {
             expectArity(args, 1, name);
             if (input.type != Value::ARRAY) {
@@ -1830,11 +2084,146 @@ private:
             return Value(joinArray(input.asArray(), requireString(args[0], name)));
         }
 
+        if (name == "slice") {
+            expectArity(args, 2, name);
+            return sliceValue(input, requireInt(args[0], name), requireInt(args[1], name), name);
+        }
+
+        if (name == "reverse") {
+            expectArity(args, 0, name);
+            return reverseValue(input, name);
+        }
+
+        if (name == "index_of") {
+            expectArity(args, 1, name);
+            return Value(indexOfValue(input, args[0], name));
+        }
+
+        if (name == "repeat") {
+            expectArity(args, 1, name);
+            return repeatValue(input, requireInt(args[0], name), name);
+        }
+
+        if (name == "sum") {
+            expectArity(args, 0, name);
+            return Value(sumValue(input, name));
+        }
+
+        if (name == "sum_by") {
+            expectArity(args, 1, name);
+            return Value(sumByField(input, args[0], name));
+        }
+
+        if (name == "flatten") {
+            expectArity(args, 0, name);
+            return flattenValue(input, name);
+        }
+
+        if (name == "take") {
+            expectArity(args, 1, name);
+            return takeValue(input, requireInt(args[0], name), name);
+        }
+
+        if (name == "skip") {
+            expectArity(args, 1, name);
+            return skipValue(input, requireInt(args[0], name), name);
+        }
+
+        if (name == "distinct") {
+            expectArity(args, 0, name);
+            return distinctValue(input, name);
+        }
+
+        if (name == "distinct_by") {
+            expectArity(args, 1, name);
+            return distinctByField(input, args[0], name);
+        }
+
+        if (name == "sort") {
+            expectArity(args, 0, name);
+            return sortValue(input, false, name);
+        }
+
+        if (name == "sort_desc") {
+            expectArity(args, 0, name);
+            return sortValue(input, true, name);
+        }
+
+        if (name == "sort_by") {
+            expectArity(args, 1, name);
+            return sortByField(input, args[0], false, name);
+        }
+
+        if (name == "sort_desc_by") {
+            expectArity(args, 1, name);
+            return sortByField(input, args[0], true, name);
+        }
+
+        if (name == "chunk") {
+            expectArity(args, 1, name);
+            return chunkValue(input, requireInt(args[0], name), name);
+        }
+
+        if (name == "bind") {
+            if (args.empty()) {
+                runtimeError("bind expects a callable and optional bound arguments");
+            }
+            expectCallableValue(args[0], name);
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return bindCallable(input, args[0], extra, name);
+        }
+
+        if (name == "chain") {
+            if (args.empty()) {
+                runtimeError("chain expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], name);
+            }
+            return chainCallables(input, args, name);
+        }
+
+        if (name == "branch") {
+            if (args.empty()) {
+                runtimeError("branch expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], name);
+            }
+            return branchCallables(input, args, name);
+        }
+
+        if (name == "guard") {
+            if (args.size() < 2 || args.size() > 3) {
+                runtimeError("guard expects predicate, true route, and optional false route");
+            }
+            expectCallableValue(args[0], name);
+            expectCallableValue(args[1], name);
+            const Value* onFalse = 0;
+            if (args.size() == 3) {
+                expectCallableValue(args[2], name);
+                onFalse = &args[2];
+            }
+            return guardCallable(input, args[0], args[1], onFalse, name);
+        }
+
+        if (name == "zip") {
+            expectArity(args, 1, name);
+            return zipValue(input, args[0], name);
+        }
+
+        if (name == "tap") {
+            if (args.empty()) {
+                runtimeError("tap expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return tapValue(input, args[0], extra, name);
+        }
+
         if (name == "map") {
             if (args.empty()) {
-                runtimeError("map expects a callable name");
+                runtimeError("map expects a callable");
             }
-            const std::string callableName = requireSymbol(args[0], name);
             std::vector<Value> extra(args.begin() + 1, args.end());
             if (input.type != Value::ARRAY) {
                 runtimeError("map expects an array input");
@@ -1843,16 +2232,23 @@ private:
             const std::vector<Value>& items = input.asArray();
             result.reserve(items.size());
             for (size_t index = 0; index < items.size(); ++index) {
-                result.push_back(invokePipeCallable(callableName, items[index], extra));
+                result.push_back(invokePipeCallable(args[0], items[index], extra, name));
             }
             return Value(result);
         }
 
+        if (name == "flat_map") {
+            if (args.empty()) {
+                runtimeError("flat_map expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return flatMapValue(input, args[0], extra, name);
+        }
+
         if (name == "filter") {
             if (args.empty()) {
-                runtimeError("filter expects a callable name");
+                runtimeError("filter expects a callable");
             }
-            const std::string callableName = requireSymbol(args[0], name);
             std::vector<Value> extra(args.begin() + 1, args.end());
             if (input.type != Value::ARRAY) {
                 runtimeError("filter expects an array input");
@@ -1860,41 +2256,118 @@ private:
             std::vector<Value> result;
             const std::vector<Value>& items = input.asArray();
             for (size_t index = 0; index < items.size(); ++index) {
-                if (invokePipeCallable(callableName, items[index], extra).isTruthy()) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
                     result.push_back(items[index]);
                 }
             }
             return Value(result);
         }
 
+        if (name == "find") {
+            if (args.empty()) {
+                runtimeError("find expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (input.type != Value::ARRAY) {
+                runtimeError("find expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return items[index];
+                }
+            }
+            return Value();
+        }
+
         if (name == "each") {
             if (args.empty()) {
-                runtimeError("each expects a callable name");
+                runtimeError("each expects a callable");
             }
-            const std::string callableName = requireSymbol(args[0], name);
             std::vector<Value> extra(args.begin() + 1, args.end());
             if (input.type != Value::ARRAY) {
                 runtimeError("each expects an array input");
             }
             const std::vector<Value>& items = input.asArray();
             for (size_t index = 0; index < items.size(); ++index) {
-                invokePipeCallable(callableName, items[index], extra);
+                invokePipeCallable(args[0], items[index], extra, name);
             }
             return input;
         }
 
+        if (name == "all") {
+            if (args.empty()) {
+                runtimeError("all expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (input.type != Value::ARRAY) {
+                runtimeError("all expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (!invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return Value(false);
+                }
+            }
+            return Value(true);
+        }
+
+        if (name == "group_by") {
+            if (args.empty()) {
+                runtimeError("group_by expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return groupByValue(input, args[0], extra, name);
+        }
+
+        if (name == "index_by") {
+            expectArity(args, 1, name);
+            return indexByField(input, args[0], name);
+        }
+
+        if (name == "count_by") {
+            expectArity(args, 1, name);
+            return countByField(input, args[0], name);
+        }
+
+        if (name == "pluck") {
+            expectArity(args, 1, name);
+            return pluckValues(input, args[0], name);
+        }
+
+        if (name == "where") {
+            expectArity(args, 2, name);
+            return whereEntries(input, args[0], args[1], name);
+        }
+
+        if (name == "any") {
+            if (args.empty()) {
+                runtimeError("any expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (input.type != Value::ARRAY) {
+                runtimeError("any expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return Value(true);
+                }
+            }
+            return Value(false);
+        }
+
         if (name == "reduce") {
             if (args.size() < 2) {
-                runtimeError("reduce expects callable name and initial value");
+                runtimeError("reduce expects callable and initial value");
             }
-            const std::string callableName = requireSymbol(args[0], name);
             if (input.type != Value::ARRAY) {
                 runtimeError("reduce expects an array input");
             }
             Value acc = args[1];
             const std::vector<Value>& items = input.asArray();
             for (size_t index = 0; index < items.size(); ++index) {
-                acc = invokePipeCallable(callableName, acc, std::vector<Value>(1, items[index]));
+                acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, items[index]), name);
             }
             return acc;
         }
@@ -1947,6 +2420,51 @@ private:
             return readValues(input, name);
         }
 
+        if (name == "entries") {
+            expectArity(args, 0, name);
+            return readEntries(input, name);
+        }
+
+        if (name == "pick") {
+            if (args.empty()) {
+                runtimeError("pick expects at least one key");
+            }
+            return pickEntries(input, args, name);
+        }
+
+        if (name == "omit") {
+            if (args.empty()) {
+                runtimeError("omit expects at least one key");
+            }
+            return omitEntries(input, args, name);
+        }
+
+        if (name == "merge") {
+            expectArity(args, 1, name);
+            return mergeEntries(input, args[0], name);
+        }
+
+        if (name == "rename") {
+            expectArity(args, 2, name);
+            return renameEntry(input, args[0], args[1], name);
+        }
+
+        if (name == "evolve") {
+            if (args.size() < 2) {
+                runtimeError("evolve expects field name and callable");
+            }
+            std::vector<Value> extra(args.begin() + 2, args.end());
+            return evolveField(input, args[0], args[1], extra, name);
+        }
+
+        if (name == "derive") {
+            if (args.size() < 2) {
+                runtimeError("derive expects field name and callable");
+            }
+            std::vector<Value> extra(args.begin() + 2, args.end());
+            return deriveField(input, args[0], args[1], extra, name);
+        }
+
         if (name == "head") {
             expectArity(args, 0, name);
             return readBoundary(input, true, name);
@@ -1975,12 +2493,49 @@ private:
             return invokeFlow(*flowIt->second, flowArgs, 0);
         }
 
+        if (isDirectBuiltinCallableName(name)) {
+            std::vector<Value> callArgs;
+            callArgs.reserve(args.size() + 1);
+            callArgs.push_back(input);
+            callArgs.insert(callArgs.end(), args.begin(), args.end());
+            return invokeIdentifierCall(name, callArgs);
+        }
+
         runtimeError("unknown stage '" + name + "'");
         return Value();
     }
 
-    Value invokePipeCallable(const std::string& name, const Value& input, const std::vector<Value>& args) {
-        return runNamedStage(name, input, args);
+    Value invokeCallableValue(const Value& callable, const std::vector<Value>& args, const std::string& context) {
+        if (callable.type == Value::STRING) {
+            return invokeIdentifierCall(callable.stringValue, args);
+        }
+
+        if (callable.type == Value::CALLABLE && callable.callableValue.get() != 0) {
+            return invokeAnonymousCallable(*callable.callableValue, args);
+        }
+
+        runtimeError(context + " target must be a callable name or pipe value");
+        return Value();
+    }
+
+    Value invokePipeCallable(const Value& callable,
+                             const Value& input,
+                             const std::vector<Value>& args,
+                             const std::string& context) {
+        if (callable.type == Value::STRING) {
+            return runNamedStage(callable.stringValue, input, args);
+        }
+
+        if (callable.type == Value::CALLABLE && callable.callableValue.get() != 0) {
+            std::vector<Value> callArgs;
+            callArgs.reserve(args.size() + 1);
+            callArgs.push_back(input);
+            callArgs.insert(callArgs.end(), args.begin(), args.end());
+            return invokeAnonymousCallable(*callable.callableValue, callArgs);
+        }
+
+        runtimeError(context + " expects a callable name or pipe value");
+        return Value();
     }
 
     Value invokeFlow(const Statement& flow, const std::vector<Value>& args, const Value* self) {
@@ -2012,6 +2567,78 @@ private:
             popScope();
             throw;
         }
+    }
+
+    Value invokeAnonymousCallable(const CallableData& callable, const std::vector<Value>& args) {
+        if (callable.kind != CallableData::PIPE_BODY) {
+            const std::string label = callable.label.empty() ? "pipe" : callable.label;
+            if (args.size() != 1) {
+                runtimeError(label + " pipe expected 1 argument but received " + std::to_string(args.size()));
+            }
+            return runNativeCallable(callable, args[0]);
+        }
+
+        if (callable.body == 0) {
+            runtimeError("pipe value has no body");
+        }
+
+        if (args.size() != callable.params.size()) {
+            runtimeError("pipe expected " + std::to_string(callable.params.size()) +
+                         " arguments but received " + std::to_string(args.size()));
+        }
+
+        pushScope();
+        ++callDepth_;
+        currentScope().vars = callable.captured;
+        for (size_t index = 0; index < callable.params.size(); ++index) {
+            currentScope().vars[callable.params[index]] = args[index];
+        }
+
+        try {
+            executeStatements(*callable.body);
+            --callDepth_;
+            popScope();
+            return Value();
+        } catch (const ReturnSignal& signal) {
+            --callDepth_;
+            popScope();
+            return signal.value;
+        } catch (...) {
+            --callDepth_;
+            popScope();
+            throw;
+        }
+    }
+
+    Value runNativeCallable(const CallableData& callable, const Value& input) {
+        switch (callable.kind) {
+            case CallableData::BOUND: {
+                if (callable.parts.empty()) {
+                    runtimeError("bind pipe has no target");
+                }
+                std::vector<Value> extra;
+                if (callable.parts.size() > 1) {
+                    extra.assign(callable.parts.begin() + 1, callable.parts.end());
+                }
+                return bindCallable(input, callable.parts[0], extra, callable.label);
+            }
+            case CallableData::CHAIN:
+                return chainCallables(input, callable.parts, callable.label);
+            case CallableData::BRANCH:
+                return branchCallables(input, callable.parts, callable.label);
+            case CallableData::GUARD: {
+                if (callable.parts.size() < 2 || callable.parts.size() > 3) {
+                    runtimeError("guard pipe has invalid shape");
+                }
+                const Value* onFalse = callable.parts.size() == 3 ? &callable.parts[2] : 0;
+                return guardCallable(input, callable.parts[0], callable.parts[1], onFalse, callable.label);
+            }
+            case CallableData::PIPE_BODY:
+                break;
+        }
+
+        runtimeError("unknown native pipe kind");
+        return Value();
     }
 
     Value invokeStage(const Statement& stage, const Value& input, const std::vector<Value>& args) {
@@ -2096,6 +2723,18 @@ private:
         return scopes_.back();
     }
 
+    std::unordered_map<std::string, Value> captureVisibleVars() const {
+        std::unordered_map<std::string, Value> captured;
+        for (size_t index = 0; index < scopes_.size(); ++index) {
+            for (std::unordered_map<std::string, Value>::const_iterator it = scopes_[index].vars.begin();
+                 it != scopes_[index].vars.end();
+                 ++it) {
+                captured[it->first] = it->second;
+            }
+        }
+        return captured;
+    }
+
     Value getVariable(const std::string& name) const {
         for (size_t index = scopes_.size(); index > 0; --index) {
             std::unordered_map<std::string, Value>::const_iterator it = scopes_[index - 1].vars.find(name);
@@ -2123,6 +2762,29 @@ private:
             runtimeError("stage '" + name + "' expected " + std::to_string(expected) +
                          " arguments but received " + std::to_string(args.size()));
         }
+    }
+
+    void expectCallableValue(const Value& value, const std::string& context) const {
+        if (value.type == Value::STRING) {
+            return;
+        }
+        if (value.type == Value::CALLABLE && value.callableValue.get() != 0) {
+            return;
+        }
+        runtimeError(context + " expects a callable name or pipe value");
+    }
+
+    bool isDirectBuiltinCallableName(const std::string& name) const {
+        return name == "range" ||
+               name == "str" ||
+               name == "int" ||
+               name == "bool" ||
+               name == "type_of" ||
+               name == "input" ||
+               name == "bind" ||
+               name == "chain" ||
+               name == "branch" ||
+               name == "guard";
     }
 
     int requireInt(const Value& value, const std::string& context) const {
@@ -2177,6 +2839,52 @@ private:
         return Value(values);
     }
 
+    Value makeNativeCallable(CallableData::Kind kind, const std::vector<Value>& parts, const std::string& label) const {
+        return Value(std::shared_ptr<CallableData>(new CallableData(kind, parts, label)));
+    }
+
+    Value bindCallable(const Value& input,
+                       const Value& callable,
+                       const std::vector<Value>& extra,
+                       const std::string& context) {
+        return invokePipeCallable(callable, input, extra, context);
+    }
+
+    Value chainCallables(const Value& input,
+                         const std::vector<Value>& callables,
+                         const std::string& context) {
+        Value current = input;
+        for (size_t index = 0; index < callables.size(); ++index) {
+            current = invokePipeCallable(callables[index], current, std::vector<Value>(), context);
+        }
+        return current;
+    }
+
+    Value branchCallables(const Value& input,
+                          const std::vector<Value>& callables,
+                          const std::string& context) {
+        std::vector<Value> result;
+        result.reserve(callables.size());
+        for (size_t index = 0; index < callables.size(); ++index) {
+            result.push_back(invokePipeCallable(callables[index], input, std::vector<Value>(), context));
+        }
+        return Value(result);
+    }
+
+    Value guardCallable(const Value& input,
+                        const Value& predicate,
+                        const Value& onTrue,
+                        const Value* onFalse,
+                        const std::string& context) {
+        if (invokePipeCallable(predicate, input, std::vector<Value>(), context).isTruthy()) {
+            return invokePipeCallable(onTrue, input, std::vector<Value>(), context);
+        }
+        if (onFalse != 0) {
+            return invokePipeCallable(*onFalse, input, std::vector<Value>(), context);
+        }
+        return input;
+    }
+
     std::string trimCopy(const std::string& input) const {
         size_t start = 0;
         while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start]))) {
@@ -2203,6 +2911,31 @@ private:
         std::string result = input;
         for (size_t index = 0; index < result.size(); ++index) {
             result[index] = static_cast<char>(std::tolower(static_cast<unsigned char>(result[index])));
+        }
+        return result;
+    }
+
+    bool stringsStartsWith(const std::string& input, const std::string& prefix) const {
+        return input.size() >= prefix.size() && input.compare(0, prefix.size(), prefix) == 0;
+    }
+
+    bool stringsEndsWith(const std::string& input, const std::string& suffix) const {
+        return input.size() >= suffix.size() &&
+               input.compare(input.size() - suffix.size(), suffix.size(), suffix) == 0;
+    }
+
+    std::string replaceAll(const std::string& input, const std::string& from, const std::string& to) const {
+        std::string result;
+        size_t start = 0;
+        while (start < input.size()) {
+            const size_t found = input.find(from, start);
+            if (found == std::string::npos) {
+                result.append(input, start, input.size() - start);
+                break;
+            }
+            result.append(input, start, found - start);
+            result += to;
+            start = found + from.size();
         }
         return result;
     }
@@ -2240,6 +2973,432 @@ private:
         return stream.str();
     }
 
+    bool containsValue(const Value& input, const Value& needle, const std::string& stageName) const {
+        if (input.type == Value::STRING) {
+            return input.stringValue.find(requireString(needle, stageName)) != std::string::npos;
+        }
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (items[index].equals(needle)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (input.type == Value::DICT) {
+            return input.asDict().find(requireString(needle, stageName)) != input.asDict().end();
+        }
+
+        if (input.type == Value::OBJECT && input.objectValue.get() != 0) {
+            return input.objectValue->fields.find(requireString(needle, stageName)) != input.objectValue->fields.end();
+        }
+
+        runtimeError("stage '" + stageName + "' expects string, array, dict, or object input");
+        return false;
+    }
+
+    Value sliceValue(const Value& input, int start, int length, const std::string& stageName) const {
+        if (input.type == Value::STRING) {
+            if (start < 0 || length < 0 || static_cast<size_t>(start) >= input.stringValue.size()) {
+                return Value("");
+            }
+            return Value(input.stringValue.substr(static_cast<size_t>(start), static_cast<size_t>(length)));
+        }
+
+        if (input.type == Value::ARRAY) {
+            if (start < 0 || length < 0 || static_cast<size_t>(start) >= input.asArray().size()) {
+                return Value(std::vector<Value>());
+            }
+            const size_t begin = static_cast<size_t>(start);
+            const size_t count = std::min(static_cast<size_t>(length), input.asArray().size() - begin);
+            return Value(std::vector<Value>(input.asArray().begin() + begin, input.asArray().begin() + begin + count));
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    Value reverseValue(const Value& input, const std::string& stageName) const {
+        if (input.type == Value::STRING) {
+            std::string result = input.stringValue;
+            std::reverse(result.begin(), result.end());
+            return Value(result);
+        }
+
+        if (input.type == Value::ARRAY) {
+            std::vector<Value> result = input.asArray();
+            std::reverse(result.begin(), result.end());
+            return Value(result);
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    int indexOfValue(const Value& input, const Value& needle, const std::string& stageName) const {
+        if (input.type == Value::STRING) {
+            const size_t found = input.stringValue.find(requireString(needle, stageName));
+            return found == std::string::npos ? -1 : static_cast<int>(found);
+        }
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (items[index].equals(needle)) {
+                    return static_cast<int>(index);
+                }
+            }
+            return -1;
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return -1;
+    }
+
+    Value repeatValue(const Value& input, int count, const std::string& stageName) const {
+        if (count < 0) {
+            runtimeError("stage '" + stageName + "' does not allow negative counts");
+        }
+
+        if (input.type == Value::STRING) {
+            std::string result;
+            for (int index = 0; index < count; ++index) {
+                result += input.stringValue;
+            }
+            return Value(result);
+        }
+
+        if (input.type == Value::ARRAY) {
+            std::vector<Value> result;
+            const std::vector<Value>& items = input.asArray();
+            result.reserve(items.size() * static_cast<size_t>(count));
+            for (int index = 0; index < count; ++index) {
+                result.insert(result.end(), items.begin(), items.end());
+            }
+            return Value(result);
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    int sumValue(const Value& input, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        int total = 0;
+        const std::vector<Value>& items = input.asArray();
+        for (size_t index = 0; index < items.size(); ++index) {
+            total += requireInt(items[index], stageName);
+        }
+        return total;
+    }
+
+    int sumByField(const Value& input, const Value& key, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        int total = 0;
+        for (size_t index = 0; index < items.size(); ++index) {
+            total += requireInt(readRecordField(items[index], symbol, stageName), stageName);
+        }
+        return total;
+    }
+
+    Value flattenValue(const Value& input, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        std::vector<Value> result;
+        const std::vector<Value>& groups = input.asArray();
+        for (size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex) {
+            if (groups[groupIndex].type != Value::ARRAY) {
+                runtimeError("stage '" + stageName + "' expects an array of arrays");
+            }
+            const std::vector<Value>& items = groups[groupIndex].asArray();
+            result.insert(result.end(), items.begin(), items.end());
+        }
+        return Value(result);
+    }
+
+    Value takeValue(const Value& input, int count, const std::string& stageName) const {
+        if (count < 0) {
+            runtimeError("stage '" + stageName + "' does not allow negative counts");
+        }
+
+        if (input.type == Value::STRING) {
+            return Value(input.stringValue.substr(0, std::min(static_cast<size_t>(count), input.stringValue.size())));
+        }
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            const size_t end = std::min(static_cast<size_t>(count), items.size());
+            return Value(std::vector<Value>(items.begin(), items.begin() + end));
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    Value skipValue(const Value& input, int count, const std::string& stageName) const {
+        if (count < 0) {
+            runtimeError("stage '" + stageName + "' does not allow negative counts");
+        }
+
+        if (input.type == Value::STRING) {
+            const size_t start = std::min(static_cast<size_t>(count), input.stringValue.size());
+            return Value(input.stringValue.substr(start));
+        }
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            const size_t start = std::min(static_cast<size_t>(count), items.size());
+            return Value(std::vector<Value>(items.begin() + start, items.end()));
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    Value distinctValue(const Value& input, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        std::vector<Value> result;
+        const std::vector<Value>& items = input.asArray();
+        for (size_t index = 0; index < items.size(); ++index) {
+            bool exists = false;
+            for (size_t seen = 0; seen < result.size(); ++seen) {
+                if (result[seen].equals(items[index])) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                result.push_back(items[index]);
+            }
+        }
+        return Value(result);
+    }
+
+    Value distinctByField(const Value& input, const Value& key, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        std::vector<Value> result;
+        std::vector<Value> seenKeys;
+        for (size_t index = 0; index < items.size(); ++index) {
+            const Value currentKey = readRecordField(items[index], symbol, stageName);
+            bool exists = false;
+            for (size_t seen = 0; seen < seenKeys.size(); ++seen) {
+                if (seenKeys[seen].equals(currentKey)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                seenKeys.push_back(currentKey);
+                result.push_back(items[index]);
+            }
+        }
+        return Value(result);
+    }
+
+    bool compareSortableValues(const Value& left, const Value& right, const std::string& stageName) const {
+        if (left.type != right.type) {
+            runtimeError("stage '" + stageName + "' requires all array elements to have the same type");
+        }
+
+        if (left.type == Value::INT) {
+            return left.intValue < right.intValue;
+        }
+
+        if (left.type == Value::STRING) {
+            return left.stringValue < right.stringValue;
+        }
+
+        if (left.type == Value::BOOL) {
+            return static_cast<int>(left.boolValue) < static_cast<int>(right.boolValue);
+        }
+
+        runtimeError("stage '" + stageName + "' supports sorting only int, string, or bool arrays");
+        return false;
+    }
+
+    Value sortValue(const Value& input, bool descending, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        std::vector<Value> result = input.asArray();
+        if (result.empty()) {
+            return Value(result);
+        }
+
+        const Value::Type baseType = result.front().type;
+        if (baseType != Value::INT && baseType != Value::STRING && baseType != Value::BOOL) {
+            runtimeError("stage '" + stageName + "' supports sorting only int, string, or bool arrays");
+        }
+
+        for (size_t index = 1; index < result.size(); ++index) {
+            if (result[index].type != baseType) {
+                runtimeError("stage '" + stageName + "' requires all array elements to have the same type");
+            }
+        }
+
+        std::sort(result.begin(), result.end(),
+                  [this, &stageName, descending](const Value& left, const Value& right) {
+                      return descending ? compareSortableValues(right, left, stageName)
+                                        : compareSortableValues(left, right, stageName);
+                  });
+        return Value(result);
+    }
+
+    Value sortByField(const Value& input, const Value& key, bool descending, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        std::vector<Value> result = input.asArray();
+        if (result.empty()) {
+            return Value(result);
+        }
+
+        const Value baseKey = readRecordField(result.front(), symbol, stageName);
+        if (baseKey.type != Value::INT && baseKey.type != Value::STRING && baseKey.type != Value::BOOL) {
+            runtimeError("stage '" + stageName + "' supports sorting only int, string, or bool record fields");
+        }
+
+        for (size_t index = 1; index < result.size(); ++index) {
+            const Value currentKey = readRecordField(result[index], symbol, stageName);
+            if (currentKey.type != baseKey.type) {
+                runtimeError("stage '" + stageName + "' requires all record fields to have the same type");
+            }
+        }
+
+        std::sort(result.begin(), result.end(),
+                  [this, &symbol, &stageName, descending](const Value& left, const Value& right) {
+                      const Value leftKey = readRecordField(left, symbol, stageName);
+                      const Value rightKey = readRecordField(right, symbol, stageName);
+                      return descending ? compareSortableValues(rightKey, leftKey, stageName)
+                                        : compareSortableValues(leftKey, rightKey, stageName);
+                  });
+        return Value(result);
+    }
+
+    Value chunkValue(const Value& input, int size, const std::string& stageName) const {
+        if (size <= 0) {
+            runtimeError("stage '" + stageName + "' expects a positive chunk size");
+        }
+
+        if (input.type == Value::STRING) {
+            std::vector<Value> result;
+            for (size_t offset = 0; offset < input.stringValue.size(); offset += static_cast<size_t>(size)) {
+                result.push_back(Value(input.stringValue.substr(offset, static_cast<size_t>(size))));
+            }
+            return Value(result);
+        }
+
+        if (input.type == Value::ARRAY) {
+            std::vector<Value> result;
+            const std::vector<Value>& items = input.asArray();
+            for (size_t offset = 0; offset < items.size(); offset += static_cast<size_t>(size)) {
+                const size_t end = std::min(offset + static_cast<size_t>(size), items.size());
+                result.push_back(Value(std::vector<Value>(items.begin() + offset, items.begin() + end)));
+            }
+            return Value(result);
+        }
+
+        runtimeError("stage '" + stageName + "' expects string or array input");
+        return Value();
+    }
+
+    Value zipValue(const Value& input, const Value& other, const std::string& stageName) const {
+        if (input.type != Value::ARRAY || other.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects array input and array argument");
+        }
+
+        const std::vector<Value>& left = input.asArray();
+        const std::vector<Value>& right = other.asArray();
+        const size_t limit = std::min(left.size(), right.size());
+        std::vector<Value> result;
+        result.reserve(limit);
+
+        for (size_t index = 0; index < limit; ++index) {
+            std::vector<Value> pair;
+            pair.push_back(left[index]);
+            pair.push_back(right[index]);
+            result.push_back(Value(pair));
+        }
+
+        return Value(result);
+    }
+
+    Value tapValue(const Value& input, const Value& callable, const std::vector<Value>& extra, const std::string& stageName) {
+        invokePipeCallable(callable, input, extra, stageName);
+        return input;
+    }
+
+    Value flatMapValue(const Value& input,
+                       const Value& callable,
+                       const std::vector<Value>& extra,
+                       const std::string& stageName) {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        std::vector<Value> result;
+        const std::vector<Value>& items = input.asArray();
+        for (size_t index = 0; index < items.size(); ++index) {
+            Value mapped = invokePipeCallable(callable, items[index], extra, stageName);
+            if (mapped.type != Value::ARRAY) {
+                runtimeError("stage '" + stageName + "' expects callable to return an array");
+            }
+            const std::vector<Value>& group = mapped.asArray();
+            result.insert(result.end(), group.begin(), group.end());
+        }
+
+        return Value(result);
+    }
+
+    Value groupByValue(const Value& input,
+                       const Value& callable,
+                       const std::vector<Value>& extra,
+                       const std::string& stageName) {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        std::unordered_map<std::string, std::vector<Value> > grouped;
+        const std::vector<Value>& items = input.asArray();
+        for (size_t index = 0; index < items.size(); ++index) {
+            const Value keyValue = invokePipeCallable(callable, items[index], extra, stageName);
+            const std::string key = requireString(keyValue, stageName);
+            grouped[key].push_back(items[index]);
+        }
+
+        std::unordered_map<std::string, Value> result;
+        for (std::unordered_map<std::string, std::vector<Value> >::const_iterator it = grouped.begin();
+             it != grouped.end();
+             ++it) {
+            result[it->first] = Value(it->second);
+        }
+        return Value(result);
+    }
+
     int containerSize(const Value& value, const std::string& name) const {
         if (value.type == Value::STRING) {
             return static_cast<int>(value.stringValue.size());
@@ -2255,6 +3414,19 @@ private:
         }
         runtimeError("stage '" + name + "' expects string, array, dict, or object input");
         return 0;
+    }
+
+    std::unordered_map<std::string, Value> copyRecordEntries(const Value& value, const std::string& stageName) const {
+        if (value.type == Value::DICT) {
+            return value.asDict();
+        }
+
+        if (value.type == Value::OBJECT && value.objectValue.get() != 0) {
+            return value.objectValue->fields;
+        }
+
+        runtimeError("stage '" + stageName + "' expects dict or object input");
+        return std::unordered_map<std::string, Value>();
     }
 
     Value readMember(const Value& object, const std::string& memberName) const {
@@ -2380,6 +3552,209 @@ private:
         return Value();
     }
 
+    Value readEntries(const Value& input, const std::string& stageName) const {
+        std::unordered_map<std::string, Value> entries = copyRecordEntries(input, stageName);
+        std::vector<std::string> keys;
+        keys.reserve(entries.size());
+        for (std::unordered_map<std::string, Value>::const_iterator it = entries.begin(); it != entries.end(); ++it) {
+            keys.push_back(it->first);
+        }
+        std::sort(keys.begin(), keys.end());
+
+        std::vector<Value> result;
+        result.reserve(keys.size());
+        for (size_t index = 0; index < keys.size(); ++index) {
+            std::unordered_map<std::string, Value> pair;
+            pair["key"] = Value(keys[index]);
+            pair["value"] = entries.find(keys[index])->second;
+            result.push_back(Value(pair));
+        }
+        return Value(result);
+    }
+
+    Value pickEntries(const Value& input, const std::vector<Value>& keys, const std::string& stageName) const {
+        const std::unordered_map<std::string, Value> entries = copyRecordEntries(input, stageName);
+        std::unordered_map<std::string, Value> result;
+        for (size_t index = 0; index < keys.size(); ++index) {
+            const std::string key = requireString(keys[index], stageName);
+            std::unordered_map<std::string, Value>::const_iterator it = entries.find(key);
+            if (it != entries.end()) {
+                result[key] = it->second;
+            }
+        }
+        return Value(result);
+    }
+
+    Value omitEntries(const Value& input, const std::vector<Value>& keys, const std::string& stageName) const {
+        std::unordered_map<std::string, Value> result = copyRecordEntries(input, stageName);
+        for (size_t index = 0; index < keys.size(); ++index) {
+            result.erase(requireString(keys[index], stageName));
+        }
+        return Value(result);
+    }
+
+    Value mergeEntries(const Value& input, const Value& other, const std::string& stageName) const {
+        std::unordered_map<std::string, Value> result = copyRecordEntries(input, stageName);
+        const std::unordered_map<std::string, Value> additions = copyRecordEntries(other, stageName);
+        for (std::unordered_map<std::string, Value>::const_iterator it = additions.begin(); it != additions.end(); ++it) {
+            result[it->first] = it->second;
+        }
+        return Value(result);
+    }
+
+    Value renameEntry(const Value& input, const Value& from, const Value& to, const std::string& stageName) const {
+        std::unordered_map<std::string, Value> result = copyRecordEntries(input, stageName);
+        const std::string fromKey = requireString(from, stageName);
+        const std::string toKey = requireString(to, stageName);
+        std::unordered_map<std::string, Value>::iterator it = result.find(fromKey);
+        if (it == result.end()) {
+            return Value(result);
+        }
+
+        if (fromKey == toKey) {
+            return Value(result);
+        }
+
+        result[toKey] = it->second;
+        result.erase(it);
+        return Value(result);
+    }
+
+    Value evolveField(const Value& input,
+                      const Value& key,
+                      const Value& callable,
+                      const std::vector<Value>& extra,
+                      const std::string& stageName) {
+        const std::string fieldName = requireString(key, stageName);
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            std::vector<Value> result;
+            result.reserve(items.size());
+            for (size_t index = 0; index < items.size(); ++index) {
+                result.push_back(evolveSingleRecord(items[index], fieldName, callable, extra, stageName));
+            }
+            return Value(result);
+        }
+
+        return evolveSingleRecord(input, fieldName, callable, extra, stageName);
+    }
+
+    Value deriveField(const Value& input,
+                      const Value& key,
+                      const Value& callable,
+                      const std::vector<Value>& extra,
+                      const std::string& stageName) {
+        const std::string fieldName = requireString(key, stageName);
+
+        if (input.type == Value::ARRAY) {
+            const std::vector<Value>& items = input.asArray();
+            std::vector<Value> result;
+            result.reserve(items.size());
+            for (size_t index = 0; index < items.size(); ++index) {
+                result.push_back(deriveSingleRecord(items[index], fieldName, callable, extra, stageName));
+            }
+            return Value(result);
+        }
+
+        return deriveSingleRecord(input, fieldName, callable, extra, stageName);
+    }
+
+    Value readRecordField(const Value& item, const Value& key, const std::string& stageName) const {
+        if (item.type != Value::DICT &&
+            (item.type != Value::OBJECT || item.objectValue.get() == 0)) {
+            runtimeError("stage '" + stageName + "' expects an array of dict or object values");
+        }
+        return readIndexedValue(item, key, stageName);
+    }
+
+    Value evolveSingleRecord(const Value& item,
+                             const std::string& fieldName,
+                             const Value& callable,
+                             const std::vector<Value>& extra,
+                             const std::string& stageName) {
+        std::unordered_map<std::string, Value> entries = copyRecordEntries(item, stageName);
+        const Value current = readRecordField(item, Value(fieldName), stageName);
+        entries[fieldName] = invokePipeCallable(callable, current, extra, stageName);
+        return Value(entries);
+    }
+
+    Value deriveSingleRecord(const Value& item,
+                             const std::string& fieldName,
+                             const Value& callable,
+                             const std::vector<Value>& extra,
+                             const std::string& stageName) {
+        std::unordered_map<std::string, Value> entries = copyRecordEntries(item, stageName);
+        entries[fieldName] = invokePipeCallable(callable, item, extra, stageName);
+        return Value(entries);
+    }
+
+    Value indexByField(const Value& input, const Value& key, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        std::unordered_map<std::string, Value> result;
+        for (size_t index = 0; index < items.size(); ++index) {
+            const Value indexedKey = readRecordField(items[index], symbol, stageName);
+            result[requireString(indexedKey, stageName)] = items[index];
+        }
+        return Value(result);
+    }
+
+    Value countByField(const Value& input, const Value& key, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        std::unordered_map<std::string, Value> result;
+        for (size_t index = 0; index < items.size(); ++index) {
+            const std::string indexedKey = requireString(readRecordField(items[index], symbol, stageName), stageName);
+            std::unordered_map<std::string, Value>::iterator it = result.find(indexedKey);
+            if (it == result.end()) {
+                result[indexedKey] = Value(1);
+            } else {
+                it->second = Value(requireInt(it->second, stageName) + 1);
+            }
+        }
+        return Value(result);
+    }
+
+    Value pluckValues(const Value& input, const Value& key, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        std::vector<Value> result;
+        result.reserve(items.size());
+        for (size_t index = 0; index < items.size(); ++index) {
+            result.push_back(readRecordField(items[index], symbol, stageName));
+        }
+        return Value(result);
+    }
+
+    Value whereEntries(const Value& input, const Value& key, const Value& expected, const std::string& stageName) const {
+        if (input.type != Value::ARRAY) {
+            runtimeError("stage '" + stageName + "' expects an array input");
+        }
+
+        const Value symbol(requireString(key, stageName));
+        const std::vector<Value>& items = input.asArray();
+        std::vector<Value> result;
+        for (size_t index = 0; index < items.size(); ++index) {
+            if (readRecordField(items[index], symbol, stageName).equals(expected)) {
+                result.push_back(items[index]);
+            }
+        }
+        return Value(result);
+    }
+
     Value readBoundary(const Value& input, bool first, const std::string& stageName) const {
         if (input.type == Value::ARRAY) {
             if (input.asArray().empty()) {
@@ -2415,6 +3790,18 @@ private:
 
 namespace {
 
+std::vector<std::unique_ptr<aethe::Statement> > parseProgram(const std::string& source) {
+    aethe::Lexer lexer(source);
+    const std::vector<aethe::Token> tokens = lexer.tokenize();
+    aethe::Parser parser(tokens);
+    return parser.parseProgram();
+}
+
+/**
+ * @brief 判断缓冲区是否只包含空白字符。
+ * @param text 需要检查的缓冲区文本。
+ * @return 当缓冲区去除空白后为空时返回 `true`。
+ */
 bool isOnlyWhitespace(const std::string& text) {
     for (size_t index = 0; index < text.size(); ++index) {
         if (!std::isspace(static_cast<unsigned char>(text[index]))) {
@@ -2424,6 +3811,11 @@ bool isOnlyWhitespace(const std::string& text) {
     return true;
 }
 
+/**
+ * @brief 判断 REPL 当前缓冲区是否已经形成完整代码块。
+ * @param source 当前缓存的用户输入。
+ * @return 当该代码块可以作为完整单元解析时返回 `true`。
+ */
 bool isCompleteChunk(const std::string& source) {
     int braceDepth = 0;
     char lastMeaningful = '\0';
@@ -2478,11 +3870,17 @@ bool isCompleteChunk(const std::string& source) {
     return lastMeaningful == ';' || lastMeaningful == '}';
 }
 
+/**
+ * @brief 运行交互式 Aethe REPL。
+ */
 void runRepl() {
     aethe::Interpreter interpreter;
     std::vector<std::vector<std::unique_ptr<aethe::Statement> > > historyPrograms;
     std::string buffer;
     std::string line;
+
+    std::cout << "Aethe 2\n";
+    std::cout << "详细语法参见https://github.com/QianCream/Aethe/blob/main/REFERENCE.md\n";
 
     while (true) {
         std::cout << (buffer.empty() ? ">>> " : "...> ");
@@ -2505,10 +3903,7 @@ void runRepl() {
             }
 
             try {
-                aethe::Lexer lexer(buffer);
-                const std::vector<aethe::Token> tokens = lexer.tokenize();
-                aethe::Parser parser(tokens);
-                std::vector<std::unique_ptr<aethe::Statement> > program = parser.parseProgram();
+                std::vector<std::unique_ptr<aethe::Statement> > program = parseProgram(buffer);
                 historyPrograms.push_back(std::move(program));
                 interpreter.executeProgram(historyPrograms.back());
             } catch (const std::exception& error) {
