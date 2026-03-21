@@ -66,11 +66,3 @@ fn double(x) {
 "Hello, Aethe!" |> substring(_, 7, 3) |> emit;
 10 |> _ * 3 + 5 |> emit;
 ```
-
-## 当前限制
-
-- 无静态类型系统
-- 无 type hints
-- 无匿名函数
-- 无模块系统
-- 无脚本文件模式
