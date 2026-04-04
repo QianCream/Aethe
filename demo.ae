@@ -1,0 +1,31 @@
+fn double(x) {
+    return $x * 2;
+}
+
+fn is_admin(user) {
+    return $user.role == admin;
+}
+
+"hello, aethe" |> upper |> emit;
+21 |> double |> emit;
+
+[1, 2, 3, 4]
+    |> map(pipe(x) { return $x * 10; })
+    |> emit;
+
+[
+    {name: "Alice", role: admin, score: 95},
+    {name: "Bob", role: guest, score: 81},
+    {name: "Carol", role: admin, score: 92}
+]
+    |> filter(is_admin)
+    |> pluck(name)
+    |> emit;
+
+[
+    {name: "Alice", score: 95},
+    {name: "Bob", score: 81},
+    {name: "Carol", score: 92}
+]
+    |> sort_desc_by(score)
+    |> emit;

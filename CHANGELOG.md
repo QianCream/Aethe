@@ -4,10 +4,15 @@
 
 这些版本号用于表达功能演进顺序，便于阅读和归档；它们不是基于 Git tag 自动生成的发布记录。
 
-当前工作区对应的状态可视为 `2.1.0`。
+当前工作区对应的状态可视为 `2.6.0`。
 
 ## 版本索引
 
+- `2.6.0`：模式分支与集合更新进一步语言化
+- `2.5.0`：赋值表达式进入语言核心
+- `2.4.0`：集合语法与集合变换继续语言化
+- `2.3.0`：累计过程进入管道本身
+- `2.2.0`：终端 IDE 进入可持久编辑阶段，顺手清理 C++11 告警
 - `2.1.0`：管道组合子成型，开始把编排本身变成值
 - `2.0.0`：管道值一等公民化，Aethe 2 起点
 - `1.13.0`：字段变形管道初步成型
@@ -25,6 +30,157 @@
 - `1.1.0`：语法方向重构，正式转向全管道设计
 - `1.0.0`：早期原型基线
 
+## 2.6.0
+
+### 主题
+
+循环绑定、分支匹配、集合改写都更接近语言内建语法。
+
+### 新增
+
+- `for` 新增双变量绑定，支持 `for index, item in ...` 与 `for key, value in ...`
+- `for` 现在也支持遍历对象
+- `match` 新增 wildcard `case _`
+- `match` 新增 guard 形式 `case pattern when condition`
+- 新增 `update(key_or_index, callable)` stage，支持数组、字符串、字典、对象
+
+### 语义说明
+
+- `for` 的双变量绑定会根据输入类型自动给出“索引 + 值”或“键 + 值”
+- `match` 的每个分支内部都会把当前匹配值绑定到 `$it`
+- `update` 会先读出当前位置的旧值，把它送进 callable，再把结果写回原位置
+- 对字典和对象执行 `update` 时，缺失键会先以 `nil` 参与计算，然后被写回
+
+### 文档
+
+- 更新 [README.md](/Users/armand/Personal/CLion/Aethe/README.md) 的版本定位、能力概览和示例
+- 扩写 [REFERENCE.md](/Users/armand/Personal/CLion/Aethe/REFERENCE.md) 的 `match`、`for` 与集合阶段章节
+- 扩写 [TUTORIAL.md](/Users/armand/Personal/CLion/Aethe/TUTORIAL.md) 的分支、遍历和集合更新示例
+
+### 验证
+
+- 使用 `clang++ -std=c++11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion main.cpp -o aethe` 编译通过
+- 回归验证了 `for` 双变量绑定、对象遍历、`match` wildcard/guard、`update`
+
+## 2.5.0
+
+### 主题
+
+变量、字段、下标更新终于成为语言内建写法。
+
+### 新增
+
+- 新增赋值表达式 `$target = expr`
+- 新增复合赋值 `$target += expr`、`$target -= expr`、`$target *= expr`、`$target /= expr`、`$target %= expr`
+- 赋值目标支持变量、成员访问、索引访问，以及它们的链式组合
+
+### 语义说明
+
+- 赋值表达式会返回写入后的值，所以它既能单独写成语句，也能嵌入更大的表达式
+- 复合赋值会先读取旧值，再执行对应二元运算，再把结果写回原位置
+- 成员与索引赋值支持沿着链路逐层更新，例如 `$user.name = "Bob"`、`$rows[0].score += 9`
+- `/=` 与 `%=` 在除数为零时仍报运行时错误
+
+### 文档
+
+- 更新 [README.md](/Users/armand/Personal/CLion/Aethe/README.md) 的版本定位与赋值示例
+- 扩写 [REFERENCE.md](/Users/armand/Personal/CLion/Aethe/REFERENCE.md) 的表达式、语句与优先级章节
+- 扩写 [TUTORIAL.md](/Users/armand/Personal/CLion/Aethe/TUTORIAL.md) 的变量更新示例
+
+### 验证
+
+- 使用 `clang++ -std=c++11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion main.cpp -o aethe` 编译通过
+- 回归验证了变量赋值、成员赋值、下标赋值与复合赋值
+
+## 2.4.0
+
+### 主题
+
+集合语法与集合变换继续语言化。
+
+### 新增
+
+- 新增直接索引语法 `expr[index]`
+- `set` 现在同时支持数组、字符串、字典、对象
+- 新增 `insert(index, value)`，支持数组和字符串
+- 新增 `remove(index_or_key)`，支持数组、字符串、字典、对象
+- 新增 `window(size)`，支持数组和字符串滑动窗口
+
+### 语义说明
+
+- `expr[index]` 是 `get(index)` / `get(key)` 的语法糖，更适合连续读取和嵌套访问
+- `set` 对数组和字符串返回新值；对字典返回新字典；对对象仍直接修改实例并返回对象
+- `remove(key)` 对字典与对象在键不存在时保持原样；数组与字符串下标越界仍报运行时错误
+- `window(size)` 会返回所有连续窗口；当窗口长度大于输入长度时返回空数组
+
+### 文档
+
+- 更新 [README.md](/Users/armand/Personal/CLion/Aethe/README.md) 的版本定位、能力概览和示例
+- 扩写 [REFERENCE.md](/Users/armand/Personal/CLion/Aethe/REFERENCE.md) 的表达式和集合阶段章节
+- 扩写 [TUTORIAL.md](/Users/armand/Personal/CLion/Aethe/TUTORIAL.md) 的数组、字典、字符串章节
+
+### 验证
+
+- 使用 `clang++ -std=c++11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion main.cpp -o aethe` 编译通过
+- 回归验证了索引语法、数组 `set` / `insert` / `remove`、字典 `remove`、字符串 `insert`、`window`
+
+## 2.3.0
+
+### 主题
+
+累计过程进入管道本身。
+
+### 新增
+
+- 新增 `scan(callable, initial)`，用于把数组的每一步累计结果重新收集成数组
+
+### 语义说明
+
+- `scan` 与 `reduce` 使用相同的累计调用形状：累积值作为输入，当前元素作为额外参数传入
+- `reduce` 适合你只关心最终值；`scan` 适合你还想把中间累计过程继续放回管道里
+- 空数组输入会返回空数组，不会把 `initial` 单独放进结果里
+
+### 文档
+
+- 更新 [README.md](/Users/armand/Personal/CLion/Aethe/README.md) 的版本定位、能力概览和示例
+- 扩写 [REFERENCE.md](/Users/armand/Personal/CLion/Aethe/REFERENCE.md) 的集合式管道章节和名称索引
+- 补充 [TUTORIAL.md](/Users/armand/Personal/CLion/Aethe/TUTORIAL.md) 对 `reduce` / `scan` 的对照示例
+
+### 验证
+
+- 使用 `clang++ -std=c++11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion main.cpp -o aethe` 编译通过
+- 回归验证了 `[1, 2, 3, 4] |> scan(pipe(acc, item) { return $acc + $item; }, 0)`
+
+## 2.2.0
+
+### 主题
+
+终端 IDE 进入可持久编辑阶段，顺手清理 C++11 告警。
+
+### 新增
+
+- IDE 新增 `Ctrl-O`，可在编辑器内直接打开脚本文件
+- IDE 新增 `Ctrl-S`，可把当前缓冲区保存到文件
+- 状态栏现在会显示当前文件路径，并在缓冲区修改后显示未保存标记
+- IDE 语法高亮补齐了 `flow`、`give`、`nil` 与更多内建阶段名称
+
+### 工程整理
+
+- 将编辑器和运行时中的多处空指针常量统一替换为 `nullptr`
+- 补齐缺失的标准头文件，避免依赖间接包含
+- 收敛数组切片与编辑器行访问中的 signed/unsigned 索引混用告警
+- 复用原有的 `writeTextFile(...)` 能力，不再保留未使用的文件写入辅助函数
+
+### 文档
+
+- 更新 [README.md](/Users/armand/Personal/CLion/Aethe/README.md) 的版本定位与 IDE 快捷键说明
+- 修正 [REFERENCE.md](/Users/armand/Personal/CLion/Aethe/REFERENCE.md) 开头对运行方式的过期描述
+
+### 验证
+
+- 使用 `clang++ -std=c++11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion main.cpp -o aethe` 编译通过
+- 回归验证了 `--run demo.ae`
+
 ## 2.1.0
 
 ### 主题
@@ -33,6 +189,7 @@
 
 ### 新增
 
+- 新增 `read_file(path)`，用于把整个文本文件读入为字符串
 - 新增 `bind(callable, ...)`，把可调用目标和额外参数绑定成单输入 `pipe` 值
 - 新增 `chain(callable1, callable2, ...)`，把多个可调用目标串成一条可复用管道
 - 新增 `branch(callable1, callable2, ...)`，把同一输入分流到多条路线并收集结果数组
@@ -41,10 +198,12 @@
 ### 语义说明
 
 - 这组组合子既能以普通调用形式返回 `callable`，也能直接作为管道阶段即时应用
+- `read_file(path)` 返回完整文件文本；打开失败或读取失败会触发运行时错误
 - `bind(get, name)`、`bind(add, 10)` 这类写法可以把“带参数 stage”转成可传递的管道值
 - `chain(trim, upper, bind(concat, "!"))` 让“管道模板”第一次可以直接按值保存和复用
 - `branch(type_of, str, bind(concat, "!"))` 让单次输入可以在一条语句里扇出成多路结果
 - 高阶阶段里的 `callable` 现在同时接受 stage 名、普通 callable 名如 `type_of`，以及 `pipe` / 组合子值
+- 推荐把 Aethe 源文件后缀统一为 `.ae`
 
 ### 文档
 
@@ -55,6 +214,7 @@
 ### 验证
 
 - 使用 `c++ -std=c++11 main.cpp -o aethe` 编译通过
+- 回归验证了 `read_file("sample.txt")`
 - 回归验证了 `bind(add, 10)(7)`、`map(bind(add, 10))`、`chain(...)`、`branch(...)`、`guard(...)`
 - 回归验证了 `pipe` 闭包、`map(pipe(...))`、`reduce(pipe(acc, item) { ... })` 与 `type_of($callable)`
 

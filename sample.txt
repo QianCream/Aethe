@@ -1,0 +1,40 @@
+type User(name, score) {
+    fn label() {
+        return $self.name
+            |> chain(trim, upper, bind(concat, "!"));
+    }
+
+    fn level() {
+        return $self.score
+            |> guard(
+                pipe(x) { return $x >= 90; },
+                pipe(x) { return "A"; },
+                pipe(x) { return "B"; }
+            );
+    }
+
+    fn snapshot() {
+        return $self.name
+            |> branch(
+                type_of,
+                str,
+                chain(trim, upper, bind(concat, "!"))
+            );
+    }
+
+    fn profile() {
+        return {
+            name: $self.name,
+            score: $self.score
+        }
+        |> derive(level, pipe(user) {
+            return $user.score
+                |> guard(
+                    pipe(x) { return $x >= 90; },
+                    pipe(x) { return "A"; },
+                    pipe(x) { return "B"; }
+                );
+        })
+        |> evolve(name, chain(trim, upper));
+    }
+}
