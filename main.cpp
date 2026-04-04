@@ -1,12 +1,11 @@
 /*
 Copyright (c) 2026 Armand
 
-Aethe 2 is an experimental programming language implementation and all related source code,
-documentation, examples, and design materials in this repository are copyrighted by the author.
-
 All rights reserved unless otherwise stated in the accompanying license file.
 Unauthorized copying, modification, distribution, or commercial use is prohibited without prior written permission.
 */
+
+// dyoxygen风格注释由AI生成，相关REFERENCE暂时没有写。
 
 #include <algorithm>
 #include <cerrno>
@@ -31,6 +30,9 @@ Unauthorized copying, modification, distribution, or commercial use is prohibite
 #include <vector>
 #include <wchar.h>
 
+// 本地运行时，构建命令要带上threading
+// find_package(Threads REQUIRED)
+// target_link_libraries(aethe PRIVATE Threads::Threads)
 #ifndef AETHE_ENABLE_THREADS
 #define AETHE_ENABLE_THREADS 0
 #endif
@@ -5320,11 +5322,7 @@ private:
         DEL_KEY,
         HOME_KEY,
         END_KEY,
-        PAGE_UP,
-        PAGE_DOWN,
-        PASTE_EVENT,
-        M_SCROLL_UP,
-        M_SCROLL_DOWN
+        PASTE_EVENT
     };
 
     enum HighlightType {
@@ -5391,8 +5389,8 @@ private:
         }
 
         rawModeEnabled_ = true;
-        // Enable alternate screen, hide cursor, bracketed paste, and SGR mouse reporting
-        std::cout << "\x1b[?1049h\x1b[H\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1015h\x1b[?1006h";
+        // Enable alternate screen, hide cursor, and bracketed paste.
+        std::cout << "\x1b[?1049h\x1b[H\x1b[?25l\x1b[?2004h";
         std::cout.flush();
     }
 
@@ -5401,7 +5399,7 @@ private:
             return;
         }
 
-        std::cout << "\x1b[?2004l\x1b[?1000l\x1b[?1015l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l";
+        std::cout << "\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l";
         std::cout.flush();
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios_);
         rawModeEnabled_ = false;
@@ -5504,11 +5502,6 @@ private:
             }
             sequence.push_back(current);
             if ((current >= 'A' && current <= 'Z') || (current >= 'a' && current <= 'z') || current == '~') {
-                // For X10 old legacy mouse reporting "\x1b[M %d %d %d", we need to consume 3 more bytes
-                if (prefix == '[' && current == 'M' && sequence.size() == 1) {
-                    char trash[3];
-                    ::read(STDIN_FILENO, &trash, 3);
-                }
                 break;
             }
         }
@@ -5522,63 +5515,12 @@ private:
             return PASTE_EVENT;
         }
 
-        if (prefix == '[' && !sequence.empty() && sequence.front() == '<') {
-            const char last = sequence.back();
-            if (last == 'M' || last == 'm') {
-                int cb = 0;
-                for (size_t i = 1; i < sequence.size(); ++i) {
-                    if (sequence[i] == ';') break;
-                    if (sequence[i] >= '0' && sequence[i] <= '9') {
-                        cb = cb * 10 + (sequence[i] - '0');
-                    }
-                }
-                // Bit 6 determines if it's the scroll wheel base (64)
-                if ((cb & 96) == 64) {
-                    if ((cb & 3) == 0) return M_SCROLL_UP;
-                    if ((cb & 3) == 1) return M_SCROLL_DOWN;
-                }
-                return '\x1b'; // Ignore clicks and movement to prevent messing up the editor
-            }
+        if (prefix == '[' && sequence == "M") {
+            char trash[3];
+            ::read(STDIN_FILENO, &trash, 3);
         }
 
-        const char finalChar = sequence.back();
-        const bool shiftModifier = sequence.find(";2") != std::string::npos;
-        switch (finalChar) {
-            case 'A':
-                return shiftModifier ? SHIFT_ARROW_UP : ARROW_UP;
-            case 'B':
-                return shiftModifier ? SHIFT_ARROW_DOWN : ARROW_DOWN;
-            case 'C':
-                return shiftModifier ? SHIFT_ARROW_RIGHT : ARROW_RIGHT;
-            case 'D':
-                return shiftModifier ? SHIFT_ARROW_LEFT : ARROW_LEFT;
-            case 'H':
-                return HOME_KEY;
-            case 'F':
-                return END_KEY;
-            default:
-                break;
-        }
-
-        if (finalChar == '~' && !sequence.empty()) {
-            switch (sequence[0]) {
-                case '1':
-                case '7':
-                    return HOME_KEY;
-                case '3':
-                    return DEL_KEY;
-                case '4':
-                case '8':
-                    return END_KEY;
-                case '5':
-                    return PAGE_UP;
-                case '6':
-                    return PAGE_DOWN;
-                default:
-                    break;
-            }
-        }
-
+        // Ignore all terminal escape/control sequences (including mouse and arrow-like sequences).
         return '\x1b';
     }
 
@@ -5755,11 +5697,17 @@ private:
 
         const std::vector<std::string> snapshot = wrappedOutputSnapshot(screenCols_);
         const int start = std::max(0, static_cast<int>(snapshot.size()) - bodyRows);
+        static const char* kOutputPlaceholderLines[] = {
+            "代码仓库请访问：https://github.com/QianCream/Aethe",
+            "代码参考参照REFERENCE.md",
+            "基础教程参照TUTORIAL.md"
+        };
+        const int placeholderCount = static_cast<int>(sizeof(kOutputPlaceholderLines) / sizeof(kOutputPlaceholderLines[0]));
         for (int row = 0; row < bodyRows; ++row) {
             const int index = start + row;
             if (index >= static_cast<int>(snapshot.size())) {
-                if (row == 0 && snapshot.empty()) {
-                    buffer << "\x1b[2mRun output will appear here.\x1b[0m";
+                if (snapshot.empty() && row < placeholderCount) {
+                    buffer << "\x1b[2m" << kOutputPlaceholderLines[row] << "\x1b[0m";
                 }
                 buffer << "\x1b[K\r\n";
                 continue;
@@ -5830,11 +5778,6 @@ private:
                 cursorX_ = static_cast<int>(currentLine().size());
                 preferredColumn_ = cursorX_;
                 return;
-            case PAGE_UP:
-            case PAGE_DOWN:
-                clearSelection();
-                movePage(key == PAGE_UP ? -1 : 1);
-                return;
             case ctrlKey('p'):
             case ARROW_UP:
             case ctrlKey('n'):
@@ -5848,12 +5791,6 @@ private:
             case SHIFT_ARROW_LEFT:
             case SHIFT_ARROW_RIGHT:
                 moveCursor(key, true);
-                return;
-            case M_SCROLL_UP:
-                for (int i = 0; i < 3; ++i) moveCursor(ARROW_UP, false);
-                return;
-            case M_SCROLL_DOWN:
-                for (int i = 0; i < 3; ++i) moveCursor(ARROW_DOWN, false);
                 return;
             case ctrlKey('d'):
             case DEL_KEY:
@@ -5882,16 +5819,6 @@ private:
         if (key >= 32 && key <= 126) {
             insertChar(static_cast<char>(key));
         }
-    }
-
-    void movePage(int direction) {
-        const int targetColumn = preferredColumn_;
-        if (direction < 0) {
-            cursorY_ = std::max(0, cursorY_ - editorRows_);
-        } else {
-            cursorY_ = std::min(static_cast<int>(lines_.size()) - 1, cursorY_ + editorRows_);
-        }
-        clampCursorX(targetColumn);
     }
 
     void moveCursor(int key, bool extendSelection) {
@@ -6068,8 +5995,6 @@ private:
     }
 
     void deleteChar() {
-        // On mac keyboards the key labeled "delete" is a backspace. At column 0 it merges
-        // the current line into the previous line, which matches common editor behavior.
         if (hasSelection()) {
             deleteSelection();
             return;
@@ -6775,6 +6700,12 @@ int main(int argc, char** argv) {
                 printUsage(argv[0]);
                 return 0;
             }
+        }
+
+        if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+            std::cerr << "[Aethe] Non-interactive terminal detected, falling back to REPL mode.\n";
+            runRepl();
+            return 0;
         }
 
         TerminalIde ide;
