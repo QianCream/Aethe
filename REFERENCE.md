@@ -1,6 +1,6 @@
-# Aethe 2 语言参考
+# Aethe 4 语言参考
 
-本文档描述 `Aethe 3 / 3.1.0` 的词法、语法、语义、运行时行为与所有内建能力。按参考手册的方式组织，适合在你知道某个概念但忘了细节时来查。
+本文档描述 `Aethe 4 / 4.0.0` 的词法、语法、语义、运行时行为与所有内建能力。按参考手册的方式组织，适合在你知道某个概念但忘了细节时来查。
 
 如果你还没读过 [TUTORIAL.md](/Users/armand/Personal/CLion/Aethe/TUTORIAL.md)，建议先读教程，再来查参考。
 
@@ -33,29 +33,42 @@
 
 ## 1. 实现范围
 
-Aethe 当前是一个单文件 C++11 解释器，源码在 [main.cpp](/Users/armand/Personal/CLion/Aethe/main.cpp)。
+Aethe 当前是一个单文件 C++11 **编译器 + 字节码虚拟机**，源码在 [main.cpp](/Users/armand/Personal/CLion/Aethe/main.cpp)。主执行路径固定为：
 
-已实现：
+```text
+source -> lexer/parser -> custom bytecode -> VM
+```
 
-- 函数 `fn` / `flow`、管道阶段 `stage`、匿名管道值 `pipe(...) { ... }`
-- 对象构造与方法 `type`
-- 条件 `when`、多分支 `match`、循环 `while` / `for`、延迟执行 `defer`
-- 赋值与复合赋值 `$x = ...`、`$x += ...`
+当前稳定支持的编译子集：
+
+- 函数 `fn` / `flow`、管道阶段 `stream`（兼容 `stage`）、匿名管道值 `pipe(...) { ... }`
+- 条件 `when` / `else`、循环 `while`、`break` / `continue`
+- 变量定义与变量赋值 `$x = ...`、`$x += ...`
 - 自动首参注入、占位符 `_`、裸表达式管道
-- 裸标识符作为符号值——变量名、字段名、筛选值都直接写进管道
-- 管道组合子 `bind`、`chain`、`branch`、`guard`
-- 丰富的字符串、容器、集合式管道与类型转换内建
+- 安全管道 `|?`
+- 裸标识符、数组/字典字面量、基础内建、常见集合管道
 
-未实现：
+当前明确不属于编译子集、会在编译阶段直接报错的历史特性：
 
-- 静态类型系统 / 类型注解
-- 模块与导入系统
+- `type`
+- `match`
+- `for`
+- `defer`
+- 成员赋值、索引赋值等未纳入当前字节码模型的写操作
+
+额外约束：
+
+- 不再回退到解释执行
+- 语言层不再提供 `read_file`
+- 宿主 CLI 不再接受脚本文件路径，只接受 IDE 缓冲区或 `stdin`
 
 运行方式：
 
 - 默认启动终端 IDE
-- `--repl` 进入旧 REPL
-- `--run <file.ae>` 单次执行脚本文件
+- `--stdin` 从标准输入单次编译执行
+- `--dump-bytecode` 从标准输入编译并打印字节码
+
+说明：本文档后续章节仍保留部分历史设计说明，用于记录语言演化方向；若与本节冲突，以本节描述的编译子集为准。
 
 ---
 
@@ -224,7 +237,25 @@ nil
 User("Alice", 95)
 ```
 
-### 3.8 `callable`
+### 3.8 `Ok` / `Err`
+
+`|?` 安全管道的结果类型。
+
+- `Ok(value)`：管道所有步骤都成功，`value` 是最终结果
+- `Err(message)`：某个步骤抛出运行时错误，`message` 是错误描述字符串
+
+两者都是结构化值，可以用 `match` 的 `case Ok(x)` / `case Err(x)` 解构。
+
+```scala
+let r = "42" |? int |? pipe(x) { return $x * 2; };
+
+match $r {
+    case Ok(v)  { $v |> emit; }
+    case Err(e) { $e |> emit; }
+}
+```
+
+### 3.9 `callable`
 
 可调用值。来源包括：
 
@@ -492,7 +523,7 @@ let g = map(_, add);       // 不行！这种外抛操作严重触礁停摆
 
 ### 7.8 Railway Safe Pipeline `|?` (3.0)
 
-Aethe 3.0 引入了一套全新的**铁轨式安全管道操作符 `|?`**。这是受到 Rust `Result<T,E>` / Elixir `{:ok, val} | {:error, reason}` / F# Railway-Oriented Programming 启发而诞生的决定性新特性。
+Aethe 4.0 引入了一套全新的**铁轨式安全管道操作符 `|?`**。这是受到 Rust `Result<T,E>` / Elixir `{:ok, val} | {:error, reason}` / F# Railway-Oriented Programming 启发而诞生的决定性新特性。
 
 #### 7.8.1 Ok / Err 包裹类型
 
@@ -638,6 +669,9 @@ match expr {
     case _ when condition { ... }
     case _ { ... }
     else { ... }
+    // Aethe 4: Ok/Err 解构（配合 |? 使用）
+    case Ok(binding) { ... }
+    case Err(binding) { ... }
 }
 ```
 
@@ -647,6 +681,7 @@ match expr {
 - **守卫条件（Guard Clause）**：`case pattern when condition` 的形式在 C++17 的 `if constexpr` 或者 C# 语法栈上极为吃香，在此模式一旦达成第一步配对后即刻执行二次关卡 `when`。
 - **隐含绑定 `$it`**：每一个成功的条件域在入口第一步被强制将源头 `expr` 最新化身寄存进该 block 层内的系统变量 `$it` 以便使用，且在出块后析构，无变量泄露之风险。
 - **下漏阻断**：匹配无 C++ 老旧的 `fall-through` 弊病，一旦命中一项在处理并跳出大结构后便全阶段终止，不需要 `break`。
+- **Ok/Err 解构**（Aethe 4 新增）：`case Ok(x)` 与 `case Err(x)` 是专用于安全管道返回值的解构形式。匹配成功后，括号内的 `x` 在该块内绑定为对应的载荷值（等价于 `unwrap()` 的自动化版本），与 `|?` 管道形成完整的 Railway Pattern 闭环。详见 [§7.8](#78-railway-safe-pipeline-)。
 
 ### 8.6 循环结构 `while`
 
@@ -851,37 +886,29 @@ $user.badge() |> emit;    // A
 ./aethe
 ```
 
-进入全屏编辑器。`Ctrl-R` 运行当前代码，`Ctrl-S` 保存，`Ctrl-O` 打开文件，`Ctrl-Q` 退出。
+进入全屏编辑器。当前只保留最基础的编辑与运行能力：`Ctrl-R` 运行当前代码，`Ctrl-Q` 退出。
 
-### 11.2 REPL
-
-```bash
-./aethe --repl
-```
-
-缓冲执行模型：
-
-- 输入的代码先进入缓冲区，不会立刻执行
-- 输入 `run` 后统一解析与执行
-- 执行完成后清空缓冲区
-- 已定义的函数、stage、类型在解释器实例中保留
-
-提示符：
-
-| 提示符 | 含义 |
-|--------|------|
-| `>>>` | 缓冲区为空 |
-| `...>` | 缓冲区非空，继续输入 |
-
-退出：`exit`、`quit`、`Ctrl+D`。
-
-### 11.3 脚本模式
+### 11.2 标准输入执行
 
 ```bash
-./aethe --run example.ae
+cat example.ae | ./aethe --stdin
 ```
 
-单次执行，不进入交互界面。
+也可以省略显式参数：
+
+```bash
+cat example.ae | ./aethe
+```
+
+非交互模式下，程序会直接从 `stdin` 读取完整源码、编译并执行一次。
+
+### 11.3 字节码导出
+
+```bash
+cat example.ae | ./aethe --dump-bytecode
+```
+
+从 `stdin` 读取源码，编译后打印自定义字节码，不执行程序主体。
 
 ### 11.4 标准输入
 
@@ -2199,7 +2226,7 @@ match $score {
 
 ## 17. 内存模型与对象生命周期
 
-Aethe 2 的底层由 C++ 实现，其内存管理机制和赋值语义在表现上与 C++ 智能指针（`std::shared_ptr`）或类似 Python 的引用动态语言一致，这与现代 C++ 中的**值语义（Value Semantics）**和**引用计数生命周期（Reference Counting Lifecycle）**直接相关。
+Aethe 4 的底层由 C++ 实现，其内存管理机制和赋值语义在表现上与 C++ 智能指针（`std::shared_ptr`）或类似 Python 的引用动态语言一致，这与现代 C++ 中的**值语义（Value Semantics）**和**引用计数生命周期（Reference Counting Lifecycle）**直接相关。
 
 ### 17.1 值类型与引用类型差异
 

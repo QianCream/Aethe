@@ -1,11 +1,3 @@
-/*
-Copyright (c) 2026 Armand
-
-All rights reserved unless otherwise stated in the accompanying license file.
-Unauthorized copying, modification, distribution, or commercial use is prohibited without prior written permission.
-*/
-
-// dyoxygen风格注释由AI生成，相关REFERENCE暂时没有写。
 
 #include <algorithm>
 #include <cerrno>
@@ -16,7 +8,6 @@ Unauthorized copying, modification, distribution, or commercial use is prohibite
 #include <cstdlib>
 #include <cstdio>
 #include <cwchar>
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -30,9 +21,6 @@ Unauthorized copying, modification, distribution, or commercial use is prohibite
 #include <vector>
 #include <wchar.h>
 
-// 本地运行时，构建命令要带上threading
-// find_package(Threads REQUIRED)
-// target_link_libraries(aethe PRIVATE Threads::Threads)
 #ifndef AETHE_ENABLE_THREADS
 #define AETHE_ENABLE_THREADS 0
 #endif
@@ -45,12 +33,8 @@ Unauthorized copying, modification, distribution, or commercial use is prohibite
 #include <thread>
 #endif
 
-/** @brief Aethe 语言前端与运行时实现。 */
 namespace aethe {
 
-/**
- * @brief 词法分析器产生的记号类型。
- */
 enum class TokenType {
     IDENTIFIER,
     NUMBER,
@@ -59,33 +43,19 @@ enum class TokenType {
     END
 };
 
-/**
- * @brief 词法记号，包含源码文本与从 1 开始的行号。
- */
 struct Token {
     TokenType type;
     std::string text;
     int line;
 };
 
-/**
- * @brief 将源码文本切分为记号序列。
- */
 class Lexer {
 public:
-    /**
-     * @brief 基于给定源码缓冲区构造词法分析器。
-     * @param source 需要切分的完整源码文本。
-     */
-    explicit Lexer(const std::string& source)
+        explicit Lexer(const std::string& source)
         : source_(source), position_(0), line_(1) {
     }
 
-    /**
-     * @brief 对整个源码缓冲区执行词法分析。
-     * @return 以 `TokenType::END` 结尾的记号序列。
-     */
-    std::vector<Token> tokenize() {
+        std::vector<Token> tokenize() {
         std::vector<Token> tokens;
 
         while (!isAtEnd()) {
@@ -286,10 +256,11 @@ private:
 struct ObjectData;
 struct CallableData;
 struct StreamData;
+struct CompiledFunction;
+struct CompiledProgram;
+class Interpreter;
+class BytecodeVirtualMachine;
 
-/**
- * @brief 解释器使用的运行时值容器。
- */
 class Value {
 public:
     enum Type {
@@ -317,11 +288,7 @@ public:
     explicit Value(const std::shared_ptr<CallableData>& value);
     explicit Value(const std::shared_ptr<StreamData>& value);
 
-    /**
-     * @brief 计算当前值的真值。
-     * @return 当该值在运行时语义下被视为真时返回 `true`。
-     */
-    bool isTruthy() const {
+        bool isTruthy() const {
         switch (type) {
             case INT:
                 return intValue != 0;
@@ -346,11 +313,7 @@ public:
         }
     }
 
-    /**
-     * @brief 返回当前值对外暴露的运行时类型名。
-     * @return `int`、`array` 等语言层类型名之一。
-     */
-    std::string typeName() const {
+        std::string typeName() const {
         switch (type) {
             case INT:
                 return "int";
@@ -379,37 +342,12 @@ public:
         }
     }
 
-    /**
-     * @brief 生成当前值的显示形式。
-     * @return 用于输出与诊断信息的字符串表示。
-     */
-    std::string toString() const;
-    /**
-     * @brief 按运行时相等性语义比较两个值。
-     * @param other 需要比较的另一个值。
-     * @return 当两个值相等时返回 `true`。
-     */
-    bool equals(const Value& other) const;
-    /**
-     * @brief 返回数组负载；若不存在则返回空视图。
-     * @return 只读数组负载。
-     */
-    const std::vector<Value>& asArray() const;
-    /**
-     * @brief 返回可写数组负载；必要时自动分配。
-     * @return 可写数组负载。
-     */
-    std::vector<Value>& mutableArray();
-    /**
-     * @brief 返回字典负载；若不存在则返回空视图。
-     * @return 只读字典负载。
-     */
-    const std::unordered_map<std::string, Value>& asDict() const;
-    /**
-     * @brief 返回可写字典负载；必要时自动分配。
-     * @return 可写字典负载。
-     */
-    std::unordered_map<std::string, Value>& mutableDict();
+        std::string toString() const;
+        bool equals(const Value& other) const;
+        const std::vector<Value>& asArray() const;
+        std::vector<Value>& mutableArray();
+        const std::unordered_map<std::string, Value>& asDict() const;
+        std::unordered_map<std::string, Value>& mutableDict();
 
     Type type;
     int intValue;
@@ -511,9 +449,6 @@ std::unordered_map<std::string, Value>& Value::mutableDict() {
     return *dictValue;
 }
 
-/**
- * @brief 基于堆分配的对象实例，用于承载 `type` 值。
- */
 struct ObjectData {
     explicit ObjectData(const std::string& type)
         : typeName(type), fields() {
@@ -669,9 +604,6 @@ bool Value::equals(const Value& other) const {
     }
 }
 
-/**
- * @brief 所有表达式节点的基类。
- */
 struct Expr {
     virtual ~Expr() {}
 };
@@ -777,9 +709,6 @@ struct PipelineExpr : Expr {
     std::vector<Stage> stages;
 };
 
-/**
- * @brief 解析器与解释器共用的语句节点。
- */
 struct Statement {
     enum Type {
         EXPR,
@@ -834,18 +763,43 @@ struct CallableData {
     CallableData(std::vector<std::string> parameterNames,
                  const std::vector<std::unique_ptr<Statement> >* callableBody,
                  const std::unordered_map<std::string, Value>& capturedValues)
-        : kind(PIPE_BODY), params(std::move(parameterNames)), body(callableBody), captured(capturedValues), parts(), label("pipe") {
+        : kind(PIPE_BODY),
+          params(std::move(parameterNames)),
+          body(callableBody),
+          compiledBody(),
+          captured(capturedValues),
+          parts(),
+          label("pipe") {
+    }
+
+    CallableData(std::vector<std::string> parameterNames,
+                 const std::shared_ptr<CompiledFunction>& compiledCallableBody,
+                 const std::unordered_map<std::string, Value>& capturedValues)
+        : kind(PIPE_BODY),
+          params(std::move(parameterNames)),
+          body(nullptr),
+          compiledBody(compiledCallableBody),
+          captured(capturedValues),
+          parts(),
+          label("pipe") {
     }
 
     CallableData(Kind callableKind,
                  std::vector<Value> storedParts,
                  const std::string& callableLabel)
-        : kind(callableKind), params(), body(nullptr), captured(), parts(std::move(storedParts)), label(callableLabel) {
+        : kind(callableKind),
+          params(),
+          body(nullptr),
+          compiledBody(),
+          captured(),
+          parts(std::move(storedParts)),
+          label(callableLabel) {
     }
 
     Kind kind;
     std::vector<std::string> params;
     const std::vector<std::unique_ptr<Statement> >* body;
+    std::shared_ptr<CompiledFunction> compiledBody;
     std::unordered_map<std::string, Value> captured;
     std::vector<Value> parts;
     std::string label;
@@ -881,6 +835,37 @@ struct StreamData {
     std::vector<Operation> operations;
 };
 
+class BytecodeVirtualMachine {
+public:
+    static void executeProgram(Interpreter* runtime,
+                               const CompiledProgram& compiled);
+    static Value runFlow(Interpreter* runtime,
+                         const CompiledFunction& function,
+                         const std::vector<Value>& args,
+                         const Value* self);
+    static Value runStage(Interpreter* runtime,
+                          const CompiledFunction& function,
+                          const Value& input,
+                          const std::vector<Value>& args);
+    static Value runPipe(Interpreter* runtime,
+                         const CompiledFunction& function,
+                         const std::unordered_map<std::string, Value>& captured,
+                         const std::vector<Value>& args);
+
+private:
+    static Value runFunction(Interpreter* runtime,
+                             const CompiledFunction& function,
+                             const std::vector<Value>& args,
+                             const std::unordered_map<std::string, Value>* captured,
+                             const Value* self,
+                             const Value* stageInput,
+                             bool createScope,
+                             bool incrementCallDepth);
+    static Value runInlinePipeExpr(Interpreter* runtime,
+                                   const CompiledFunction& function,
+                                   const Value& input);
+};
+
 Value::Value(const std::shared_ptr<CallableData>& value)
     : type(CALLABLE), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(value), streamValue(), resultValue() {
 }
@@ -889,24 +874,13 @@ Value::Value(const std::shared_ptr<StreamData>& value)
     : type(STREAM), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(value), resultValue() {
 }
 
-/**
- * @brief Aethe 源码的递归下降解析器。
- */
 class Parser {
 public:
-    /**
-     * @brief 基于现有记号缓冲区构造解析器。
-     * @param tokens 由词法分析器生成的记号序列。
-     */
-    explicit Parser(const std::vector<Token>& tokens)
+        explicit Parser(const std::vector<Token>& tokens)
         : tokens_(tokens), position_(0) {
     }
 
-    /**
-     * @brief 解析完整程序。
-     * @return 顶层语句列表。
-     */
-    std::vector<std::unique_ptr<Statement> > parseProgram() {
+        std::vector<std::unique_ptr<Statement> > parseProgram() {
         std::vector<std::unique_ptr<Statement> > program;
         while (!isAtEnd()) {
             program.push_back(parseStatement());
@@ -1525,22 +1499,20 @@ SharedThreadPool& sharedThreadPool() {
 }
 #endif
 
-/**
- * @brief 执行已解析的 Aethe 程序，并维护 REPL 状态。
- */
 class Interpreter {
 public:
     typedef std::function<void(const std::string&)> OutputHandler;
     typedef std::function<bool(const std::string&, std::string*)> InputHandler;
 
-    /**
-     * @brief 初始化解释器，并创建全局作用域。
-     */
-    explicit Interpreter(const OutputHandler& outputHandler = OutputHandler(),
+    friend class BytecodeVirtualMachine;
+
+        explicit Interpreter(const OutputHandler& outputHandler = OutputHandler(),
                          const InputHandler& inputHandler = InputHandler())
         : scopes_(1),
           flows_(),
           stages_(),
+          compiledFlows_(),
+          compiledStages_(),
           types_(),
           callDepth_(0),
           loopDepth_(0),
@@ -1548,11 +1520,7 @@ public:
           inputHandler_(inputHandler ? inputHandler : consoleInput) {
     }
 
-    /**
-     * @brief 在当前解释器状态上执行一段已解析程序。
-     * @param program 需要执行的语句列表。
-     */
-    void executeProgram(const std::vector<std::unique_ptr<Statement> >& program) {
+        void executeProgram(const std::vector<std::unique_ptr<Statement> >& program) {
         for (size_t index = 0; index < program.size(); ++index) {
             registerTopLevelDefinition(*program[index]);
         }
@@ -1681,15 +1649,12 @@ private:
             const Expr* pattern = statement.arms[index].get();
             const bool wildcard = dynamic_cast<const PlaceholderExpr*>(pattern) != nullptr;
 
-            // Destructuring match for Ok(binding) and Err(binding)
             if (const CallExpr* callPattern = dynamic_cast<const CallExpr*>(pattern)) {
                 if (const IdentifierExpr* id = dynamic_cast<const IdentifierExpr*>(callPattern->callee.get())) {
                     if ((id->name == "Ok" && target.type == Value::RESULT_OK) ||
                         (id->name == "Err" && target.type == Value::RESULT_ERR)) {
                         if (matchGuardPasses(target, statement.armGuards[index].get())) {
-                            // Extract the inner value for the match block
                             Value inner = target.resultValue ? *target.resultValue : Value();
-                            // If the pattern has an argument like Ok(x), bind x = inner
                             if (callPattern->args.size() == 1) {
                                 if (const IdentifierExpr* binding = dynamic_cast<const IdentifierExpr*>(callPattern->args[0].get())) {
                                     pushScope();
@@ -1721,7 +1686,6 @@ private:
         }
         return executeMatchBlock(target, statement.elseBody);
     }
-
 
     Value executeStatements(const std::vector<std::unique_ptr<Statement> >& body) {
         Value last;
@@ -2095,63 +2059,66 @@ private:
 
         const Value left = evalExpr(binary.left.get(), pipeInput);
         const Value right = evalExpr(binary.right.get(), pipeInput);
+        return applyBinaryOperator(left, binary.op, right);
+    }
 
-        if (binary.op == "+") {
+    Value applyBinaryOperator(const Value& left, const std::string& op, const Value& right) const {
+        if (op == "+") {
             if (left.type == Value::STRING || right.type == Value::STRING) {
                 return Value(left.toString() + right.toString());
             }
-            return Value(requireInt(left, "+") + requireInt(right, "+"));
+            return Value(requireInt(left, op) + requireInt(right, op));
         }
 
-        if (binary.op == "-") {
-            return Value(requireInt(left, "-") - requireInt(right, "-"));
+        if (op == "-") {
+            return Value(requireInt(left, op) - requireInt(right, op));
         }
 
-        if (binary.op == "*") {
-            return Value(requireInt(left, "*") * requireInt(right, "*"));
+        if (op == "*") {
+            return Value(requireInt(left, op) * requireInt(right, op));
         }
 
-        if (binary.op == "/") {
-            const int divisor = requireInt(right, "/");
+        if (op == "/") {
+            const int divisor = requireInt(right, op);
             if (divisor == 0) {
                 runtimeError("division by zero");
             }
-            return Value(requireInt(left, "/") / divisor);
+            return Value(requireInt(left, op) / divisor);
         }
 
-        if (binary.op == "%") {
-            const int divisor = requireInt(right, "%");
+        if (op == "%") {
+            const int divisor = requireInt(right, op);
             if (divisor == 0) {
                 runtimeError("modulo by zero");
             }
-            return Value(requireInt(left, "%") % divisor);
+            return Value(requireInt(left, op) % divisor);
         }
 
-        if (binary.op == "==") {
+        if (op == "==") {
             return Value(left.equals(right));
         }
 
-        if (binary.op == "!=") {
+        if (op == "!=") {
             return Value(!left.equals(right));
         }
 
-        if (binary.op == ">") {
-            return Value(requireInt(left, ">") > requireInt(right, ">"));
+        if (op == ">") {
+            return Value(requireInt(left, op) > requireInt(right, op));
         }
 
-        if (binary.op == ">=") {
-            return Value(requireInt(left, ">=") >= requireInt(right, ">="));
+        if (op == ">=") {
+            return Value(requireInt(left, op) >= requireInt(right, op));
         }
 
-        if (binary.op == "<") {
-            return Value(requireInt(left, "<") < requireInt(right, "<"));
+        if (op == "<") {
+            return Value(requireInt(left, op) < requireInt(right, op));
         }
 
-        if (binary.op == "<=") {
-            return Value(requireInt(left, "<=") <= requireInt(right, "<="));
+        if (op == "<=") {
+            return Value(requireInt(left, op) <= requireInt(right, op));
         }
 
-        runtimeError("unknown binary operator '" + binary.op + "'");
+        runtimeError("unknown binary operator '" + op + "'");
     }
 
     bool isAssignableTarget(const Expr* expr) const {
@@ -2292,7 +2259,6 @@ private:
         return value;
     }
 
-
     std::vector<Value> evalArgs(const std::vector<std::unique_ptr<Expr> >& args, const Value* pipeInput = nullptr) {
         std::vector<Value> values;
         values.reserve(args.size());
@@ -2303,6 +2269,10 @@ private:
     }
 
     Value invokeIdentifierCall(const std::string& name, const std::vector<Value>& args) {
+        if (name == "read_file") {
+            runtimeError("read_file is disabled in sandbox mode");
+        }
+
         if (name == "Ok") {
             if (args.size() != 1) runtimeError("Ok expects exactly one argument");
             return Value::Ok(args[0]);
@@ -2386,13 +2356,6 @@ private:
             return Value(line);
         }
 
-        if (name == "read_file") {
-            if (args.size() != 1) {
-                runtimeError("read_file expects one argument");
-            }
-            return Value(readFile(requireString(args[0], "read_file")));
-        }
-
         if (name == "bind") {
             if (args.empty()) {
                 runtimeError("bind expects a callable and optional bound arguments");
@@ -2431,14 +2394,10 @@ private:
             return makeNativeCallable(CallableData::GUARD, args, "guard");
         }
 
-        std::unordered_map<std::string, const Statement*>::const_iterator flowIt = flows_.find(name);
-        if (flowIt != flows_.end()) {
-            return invokeFlow(*flowIt->second, args, nullptr);
-        }
-
-        std::unordered_map<std::string, TypeInfo>::const_iterator typeIt = types_.find(name);
-        if (typeIt != types_.end()) {
-            return constructObject(name, typeIt->second, args);
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
+            compiledFlows_.find(name);
+        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
+            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, args, nullptr);
         }
 
         if (!args.empty()) {
@@ -3240,22 +3199,20 @@ private:
             return windowValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
         }
 
-        if (input.type == Value::OBJECT && hasMethod(input.objectValue->typeName, name)) {
-            return invokeMethod(input, name, args);
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledStageIt =
+            compiledStages_.find(name);
+        if (compiledStageIt != compiledStages_.end() && compiledStageIt->second.get() != nullptr) {
+            return BytecodeVirtualMachine::runStage(this, *compiledStageIt->second, input, args);
         }
 
-        std::unordered_map<std::string, const Statement*>::const_iterator stageIt = stages_.find(name);
-        if (stageIt != stages_.end()) {
-            return invokeStage(*stageIt->second, input, args);
-        }
-
-        std::unordered_map<std::string, const Statement*>::const_iterator flowIt = flows_.find(name);
-        if (flowIt != flows_.end()) {
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
+            compiledFlows_.find(name);
+        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
             std::vector<Value> flowArgs;
             flowArgs.reserve(args.size() + 1);
             flowArgs.push_back(input);
             flowArgs.insert(flowArgs.end(), args.begin(), args.end());
-            return invokeFlow(*flowIt->second, flowArgs, nullptr);
+            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, flowArgs, nullptr);
         }
 
         if (isDirectBuiltinCallableName(name)) {
@@ -3340,36 +3297,15 @@ private:
             return runNativeCallable(callable, args[0]);
         }
 
-        if (callable.body == nullptr) {
-            runtimeError("pipe value has no body");
+        if (callable.compiledBody.get() != nullptr) {
+            if (args.size() != callable.params.size()) {
+                runtimeError("pipe expected " + std::to_string(callable.params.size()) +
+                             " arguments but received " + std::to_string(args.size()));
+            }
+            return BytecodeVirtualMachine::runPipe(this, *callable.compiledBody, callable.captured, args);
         }
 
-        if (args.size() != callable.params.size()) {
-            runtimeError("pipe expected " + std::to_string(callable.params.size()) +
-                         " arguments but received " + std::to_string(args.size()));
-        }
-
-        pushScope();
-        ++callDepth_;
-        currentScope().vars = callable.captured;
-        for (size_t index = 0; index < callable.params.size(); ++index) {
-            currentScope().vars[callable.params[index]] = args[index];
-        }
-
-        try {
-            executeStatements(*callable.body);
-            --callDepth_;
-            popScope();
-            return Value();
-        } catch (const ReturnSignal& signal) {
-            --callDepth_;
-            popScope();
-            return signal.value;
-        } catch (...) {
-            --callDepth_;
-            popScope();
-            throw;
-        }
+        runtimeError("pipe value has no compiled body");
     }
 
     Value runNativeCallable(const CallableData& callable, const Value& input) {
@@ -3543,7 +3479,6 @@ private:
                name == "bool" ||
                name == "type_of" ||
                name == "input" ||
-               name == "read_file" ||
                name == "bind" ||
                name == "chain" ||
                name == "branch" ||
@@ -3807,20 +3742,6 @@ private:
         }
 
         return input.substr(start, end - start);
-    }
-
-    std::string readFile(const std::string& path) const {
-        std::ifstream stream(path.c_str(), std::ios::in | std::ios::binary);
-        if (!stream) {
-            runtimeError("read_file could not open '" + path + "'");
-        }
-
-        std::ostringstream buffer;
-        buffer << stream.rdbuf();
-        if (!stream.good() && !stream.eof()) {
-            runtimeError("read_file failed while reading '" + path + "'");
-        }
-        return buffer.str();
     }
 
     std::string toUpperCopy(const std::string& input) const {
@@ -4914,12 +4835,1689 @@ private:
     std::vector<ScopeFrame> scopes_;
     std::unordered_map<std::string, const Statement*> flows_;
     std::unordered_map<std::string, const Statement*> stages_;
+    std::unordered_map<std::string, std::shared_ptr<CompiledFunction> > compiledFlows_;
+    std::unordered_map<std::string, std::shared_ptr<CompiledFunction> > compiledStages_;
     std::unordered_map<std::string, TypeInfo> types_;
     int callDepth_;
     int loopDepth_;
     OutputHandler outputHandler_;
     InputHandler inputHandler_;
 };
+
+struct BytecodeInstruction {
+    enum Op {
+        PUSH_CONST,
+        LOAD_VAR,
+        STORE_VAR_KEEP,
+        MAKE_ARRAY,
+        MAKE_DICT,
+        UNARY_NOT,
+        UNARY_NEG,
+        BINARY_OP,
+        ASSIGN_OP,
+        GET_MEMBER,
+        GET_INDEX,
+        CALL_NAMED,
+        CALL_MEMBER,
+        CALL_VALUE,
+        MAKE_PIPE,
+        PUSH_SCOPE,
+        POP_SCOPE,
+        JUMP,
+        JUMP_IF_FALSE,
+        JUMP_IF_TRUE,
+        TRUTHY,
+        PIPE_NAMED,
+        PIPE_VALUE,
+        PIPE_INLINE_EXPR,
+        LOOP_ENTER,
+        LOOP_EXIT,
+        LOOP_BREAK,
+        LOOP_CONTINUE,
+        RETURN_VALUE,
+        POP
+    };
+
+    explicit BytecodeInstruction(Op opcode = POP)
+        : op(opcode),
+          operand(0),
+          operand2(0),
+          flag(false),
+          text(),
+          constant(),
+          names(),
+          expr(nullptr),
+          statement(nullptr),
+          function() {
+    }
+
+    Op op;
+    int operand;
+    int operand2;
+    bool flag;
+    std::string text;
+    Value constant;
+    std::vector<std::string> names;
+    const Expr* expr;
+    const Statement* statement;
+    std::shared_ptr<CompiledFunction> function;
+};
+
+struct CompiledFunction {
+    enum Kind {
+        SCRIPT,
+        FLOW,
+        STAGE,
+        PIPE,
+        INLINE_EXPR
+    };
+
+    CompiledFunction()
+        : kind(SCRIPT), name(), params(), code(), syntheticId(0) {
+    }
+
+    Kind kind;
+    std::string name;
+    std::vector<std::string> params;
+    std::vector<BytecodeInstruction> code;
+    int syntheticId;
+};
+
+struct CompiledProgram {
+    CompiledProgram()
+        : entry(), flows(), stages(), functions() {
+    }
+
+    std::shared_ptr<CompiledFunction> entry;
+    std::unordered_map<std::string, std::shared_ptr<CompiledFunction> > flows;
+    std::unordered_map<std::string, std::shared_ptr<CompiledFunction> > stages;
+    std::vector<std::shared_ptr<CompiledFunction> > functions;
+};
+
+namespace bytecode_optimizer {
+
+inline bool requiresIntOperands(const std::string& op) {
+    return op == "-" || op == "*" || op == "/" || op == "%" ||
+           op == ">" || op == ">=" || op == "<" || op == "<=";
+}
+
+inline bool tryFoldUnary(const BytecodeInstruction& valueInstruction,
+                         const BytecodeInstruction& opInstruction,
+                         BytecodeInstruction* foldedInstruction) {
+    if (foldedInstruction == nullptr || valueInstruction.op != BytecodeInstruction::PUSH_CONST) {
+        return false;
+    }
+
+    if (opInstruction.op == BytecodeInstruction::UNARY_NOT) {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        foldedInstruction->constant = Value(!valueInstruction.constant.isTruthy());
+        return true;
+    }
+
+    if (opInstruction.op == BytecodeInstruction::UNARY_NEG &&
+        valueInstruction.constant.type == Value::INT) {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        foldedInstruction->constant = Value(-valueInstruction.constant.intValue);
+        return true;
+    }
+
+    if (opInstruction.op == BytecodeInstruction::TRUTHY) {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        foldedInstruction->constant = Value(valueInstruction.constant.isTruthy());
+        return true;
+    }
+
+    return false;
+}
+
+inline bool tryFoldBinary(const BytecodeInstruction& leftInstruction,
+                          const BytecodeInstruction& rightInstruction,
+                          const BytecodeInstruction& opInstruction,
+                          BytecodeInstruction* foldedInstruction) {
+    if (foldedInstruction == nullptr ||
+        leftInstruction.op != BytecodeInstruction::PUSH_CONST ||
+        rightInstruction.op != BytecodeInstruction::PUSH_CONST ||
+        opInstruction.op != BytecodeInstruction::BINARY_OP) {
+        return false;
+    }
+
+    const Value& left = leftInstruction.constant;
+    const Value& right = rightInstruction.constant;
+    const std::string& op = opInstruction.text;
+
+    if (op == "+") {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        if (left.type == Value::STRING || right.type == Value::STRING) {
+            foldedInstruction->constant = Value(left.toString() + right.toString());
+            return true;
+        }
+        if (left.type == Value::INT && right.type == Value::INT) {
+            foldedInstruction->constant = Value(left.intValue + right.intValue);
+            return true;
+        }
+        return false;
+    }
+
+    if (requiresIntOperands(op)) {
+        if (left.type != Value::INT || right.type != Value::INT) {
+            return false;
+        }
+
+        if ((op == "/" || op == "%") && right.intValue == 0) {
+            return false;
+        }
+
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        if (op == "-") {
+            foldedInstruction->constant = Value(left.intValue - right.intValue);
+            return true;
+        }
+        if (op == "*") {
+            foldedInstruction->constant = Value(left.intValue * right.intValue);
+            return true;
+        }
+        if (op == "/") {
+            foldedInstruction->constant = Value(left.intValue / right.intValue);
+            return true;
+        }
+        if (op == "%") {
+            foldedInstruction->constant = Value(left.intValue % right.intValue);
+            return true;
+        }
+        if (op == ">") {
+            foldedInstruction->constant = Value(left.intValue > right.intValue);
+            return true;
+        }
+        if (op == ">=") {
+            foldedInstruction->constant = Value(left.intValue >= right.intValue);
+            return true;
+        }
+        if (op == "<") {
+            foldedInstruction->constant = Value(left.intValue < right.intValue);
+            return true;
+        }
+        if (op == "<=") {
+            foldedInstruction->constant = Value(left.intValue <= right.intValue);
+            return true;
+        }
+        return false;
+    }
+
+    if (op == "==") {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        foldedInstruction->constant = Value(left.equals(right));
+        return true;
+    }
+
+    if (op == "!=") {
+        *foldedInstruction = BytecodeInstruction(BytecodeInstruction::PUSH_CONST);
+        foldedInstruction->constant = Value(!left.equals(right));
+        return true;
+    }
+
+    return false;
+}
+
+inline int translateTarget(const std::vector<int>& firstNewIndexAtOld,
+                           int oldTarget,
+                           int oldSize,
+                           int newSize) {
+    if (oldTarget >= oldSize) {
+        return newSize;
+    }
+
+    int target = oldTarget;
+    if (target < 0) {
+        target = 0;
+    }
+
+    for (int probe = target; probe <= oldSize; ++probe) {
+        if (firstNewIndexAtOld[static_cast<size_t>(probe)] != -1) {
+            return firstNewIndexAtOld[static_cast<size_t>(probe)];
+        }
+    }
+
+    return newSize;
+}
+
+inline void remapTargets(std::vector<BytecodeInstruction>* code,
+                         const std::vector<int>& origins,
+                         int oldSize) {
+    if (code == nullptr) {
+        return;
+    }
+
+    std::vector<int> firstNewIndexAtOld(static_cast<size_t>(oldSize) + 1, -1);
+    for (size_t newIndex = 0; newIndex < origins.size(); ++newIndex) {
+        const int origin = origins[newIndex];
+        if (origin >= 0 &&
+            origin <= oldSize &&
+            firstNewIndexAtOld[static_cast<size_t>(origin)] == -1) {
+            firstNewIndexAtOld[static_cast<size_t>(origin)] = static_cast<int>(newIndex);
+        }
+    }
+    firstNewIndexAtOld[static_cast<size_t>(oldSize)] = static_cast<int>(code->size());
+
+    for (size_t index = 0; index < code->size(); ++index) {
+        BytecodeInstruction& instruction = (*code)[index];
+        if (instruction.op == BytecodeInstruction::JUMP ||
+            instruction.op == BytecodeInstruction::JUMP_IF_FALSE ||
+            instruction.op == BytecodeInstruction::JUMP_IF_TRUE) {
+            instruction.operand = translateTarget(firstNewIndexAtOld,
+                                                  instruction.operand,
+                                                  oldSize,
+                                                  static_cast<int>(code->size()));
+            continue;
+        }
+
+        if (instruction.op == BytecodeInstruction::LOOP_ENTER) {
+            instruction.operand = translateTarget(firstNewIndexAtOld,
+                                                  instruction.operand,
+                                                  oldSize,
+                                                  static_cast<int>(code->size()));
+            instruction.operand2 = translateTarget(firstNewIndexAtOld,
+                                                   instruction.operand2,
+                                                   oldSize,
+                                                   static_cast<int>(code->size()));
+        }
+    }
+}
+
+inline bool optimizeFunctionPass(const std::shared_ptr<CompiledFunction>& function) {
+    if (function.get() == nullptr || function->code.empty()) {
+        return false;
+    }
+
+    const std::vector<BytecodeInstruction> oldCode = function->code;
+    std::vector<BytecodeInstruction> newCode;
+    std::vector<int> origins;
+    newCode.reserve(oldCode.size());
+    origins.reserve(oldCode.size());
+
+    bool changed = false;
+    size_t index = 0;
+    while (index < oldCode.size()) {
+        BytecodeInstruction folded;
+
+        if (index + 2 < oldCode.size() &&
+            tryFoldBinary(oldCode[index], oldCode[index + 1], oldCode[index + 2], &folded)) {
+            newCode.push_back(folded);
+            origins.push_back(static_cast<int>(index));
+            index += 3;
+            changed = true;
+            continue;
+        }
+
+        if (index + 1 < oldCode.size() &&
+            tryFoldUnary(oldCode[index], oldCode[index + 1], &folded)) {
+            newCode.push_back(folded);
+            origins.push_back(static_cast<int>(index));
+            index += 2;
+            changed = true;
+            continue;
+        }
+
+        if (index + 1 < oldCode.size() &&
+            oldCode[index].op == BytecodeInstruction::TRUTHY &&
+            (oldCode[index + 1].op == BytecodeInstruction::TRUTHY ||
+             oldCode[index + 1].op == BytecodeInstruction::UNARY_NOT ||
+             oldCode[index + 1].op == BytecodeInstruction::JUMP_IF_FALSE ||
+             oldCode[index + 1].op == BytecodeInstruction::JUMP_IF_TRUE)) {
+            newCode.push_back(oldCode[index + 1]);
+            origins.push_back(static_cast<int>(index + 1));
+            index += 2;
+            changed = true;
+            continue;
+        }
+
+        if (index + 1 < oldCode.size() &&
+            oldCode[index].op == BytecodeInstruction::PUSH_CONST &&
+            (oldCode[index + 1].op == BytecodeInstruction::JUMP_IF_FALSE ||
+             oldCode[index + 1].op == BytecodeInstruction::JUMP_IF_TRUE)) {
+            const bool shouldJump =
+                oldCode[index + 1].op == BytecodeInstruction::JUMP_IF_FALSE
+                    ? !oldCode[index].constant.isTruthy()
+                    : oldCode[index].constant.isTruthy();
+            if (shouldJump) {
+                BytecodeInstruction jump(BytecodeInstruction::JUMP);
+                jump.operand = oldCode[index + 1].operand;
+                newCode.push_back(jump);
+                origins.push_back(static_cast<int>(index));
+            }
+            index += 2;
+            changed = true;
+            continue;
+        }
+
+        if (index + 1 < oldCode.size() &&
+            oldCode[index].op == BytecodeInstruction::PUSH_CONST &&
+            oldCode[index + 1].op == BytecodeInstruction::POP) {
+            index += 2;
+            changed = true;
+            continue;
+        }
+
+        if (index + 1 < oldCode.size() &&
+            oldCode[index].op == BytecodeInstruction::PUSH_SCOPE &&
+            oldCode[index + 1].op == BytecodeInstruction::POP_SCOPE) {
+            index += 2;
+            changed = true;
+            continue;
+        }
+
+        if (oldCode[index].op == BytecodeInstruction::JUMP &&
+            oldCode[index].operand == static_cast<int>(index + 1)) {
+            ++index;
+            changed = true;
+            continue;
+        }
+
+        newCode.push_back(oldCode[index]);
+        origins.push_back(static_cast<int>(index));
+        ++index;
+    }
+
+    if (!changed) {
+        return false;
+    }
+
+    remapTargets(&newCode, origins, static_cast<int>(oldCode.size()));
+    function->code.swap(newCode);
+    return true;
+}
+
+inline bool eliminateUnreachableCode(const std::shared_ptr<CompiledFunction>& function) {
+    if (function.get() == nullptr || function->code.empty()) {
+        return false;
+    }
+
+    const std::vector<BytecodeInstruction> oldCode = function->code;
+    std::vector<bool> reachable(oldCode.size(), false);
+    std::vector<int> worklist(1, 0);
+
+    while (!worklist.empty()) {
+        const int ip = worklist.back();
+        worklist.pop_back();
+
+        if (ip < 0 || ip >= static_cast<int>(oldCode.size()) || reachable[static_cast<size_t>(ip)]) {
+            continue;
+        }
+
+        reachable[static_cast<size_t>(ip)] = true;
+        const BytecodeInstruction& instruction = oldCode[static_cast<size_t>(ip)];
+
+        if (instruction.op == BytecodeInstruction::JUMP) {
+            worklist.push_back(instruction.operand);
+            continue;
+        }
+
+        if (instruction.op == BytecodeInstruction::JUMP_IF_FALSE ||
+            instruction.op == BytecodeInstruction::JUMP_IF_TRUE) {
+            worklist.push_back(ip + 1);
+            worklist.push_back(instruction.operand);
+            continue;
+        }
+
+        if (instruction.op == BytecodeInstruction::RETURN_VALUE) {
+            continue;
+        }
+
+        if (instruction.op == BytecodeInstruction::LOOP_BREAK ||
+            instruction.op == BytecodeInstruction::LOOP_CONTINUE) {
+            worklist.push_back(ip + 1);
+            continue;
+        }
+
+        worklist.push_back(ip + 1);
+    }
+
+    bool changed = false;
+    std::vector<BytecodeInstruction> newCode;
+    std::vector<int> origins;
+    newCode.reserve(oldCode.size());
+    origins.reserve(oldCode.size());
+
+    for (size_t index = 0; index < oldCode.size(); ++index) {
+        if (!reachable[index]) {
+            changed = true;
+            continue;
+        }
+        newCode.push_back(oldCode[index]);
+        origins.push_back(static_cast<int>(index));
+    }
+
+    if (!changed) {
+        return false;
+    }
+
+    remapTargets(&newCode, origins, static_cast<int>(oldCode.size()));
+    function->code.swap(newCode);
+    return true;
+}
+
+inline void optimizeFunction(const std::shared_ptr<CompiledFunction>& function) {
+    for (int pass = 0; pass < 8; ++pass) {
+        const bool peepholeChanged = optimizeFunctionPass(function);
+        const bool dceChanged = eliminateUnreachableCode(function);
+        if (!peepholeChanged && !dceChanged) {
+            break;
+        }
+    }
+}
+
+}
+
+inline void optimizeCompiledProgram(CompiledProgram* program) {
+    if (program == nullptr) {
+        return;
+    }
+
+    for (size_t index = 0; index < program->functions.size(); ++index) {
+        bytecode_optimizer::optimizeFunction(program->functions[index]);
+    }
+}
+
+static bool expressionContainsPlaceholder(const Expr* expr) {
+    if (dynamic_cast<const PlaceholderExpr*>(expr) != nullptr) {
+        return true;
+    }
+
+    if (const ArrayExpr* array = dynamic_cast<const ArrayExpr*>(expr)) {
+        for (size_t index = 0; index < array->elements.size(); ++index) {
+            if (expressionContainsPlaceholder(array->elements[index].get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (const DictExpr* dict = dynamic_cast<const DictExpr*>(expr)) {
+        for (size_t index = 0; index < dict->entries.size(); ++index) {
+            if (expressionContainsPlaceholder(dict->entries[index].second.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+        return expressionContainsPlaceholder(unary->right.get());
+    }
+
+    if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+        return expressionContainsPlaceholder(binary->left.get()) ||
+               expressionContainsPlaceholder(binary->right.get());
+    }
+
+    if (const AssignExpr* assign = dynamic_cast<const AssignExpr*>(expr)) {
+        return expressionContainsPlaceholder(assign->target.get()) ||
+               expressionContainsPlaceholder(assign->value.get());
+    }
+
+    if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
+        return expressionContainsPlaceholder(member->object.get());
+    }
+
+    if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
+        return expressionContainsPlaceholder(index->container.get()) ||
+               expressionContainsPlaceholder(index->index.get());
+    }
+
+    if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
+        if (expressionContainsPlaceholder(call->callee.get())) {
+            return true;
+        }
+        for (size_t index = 0; index < call->args.size(); ++index) {
+            if (expressionContainsPlaceholder(call->args[index].get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (const PipelineExpr* pipeline = dynamic_cast<const PipelineExpr*>(expr)) {
+        if (expressionContainsPlaceholder(pipeline->source.get())) {
+            return true;
+        }
+        for (size_t index = 0; index < pipeline->stages.size(); ++index) {
+            if (expressionContainsPlaceholder(pipeline->stages[index].expr.get())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (dynamic_cast<const PipeExpr*>(expr) != nullptr) {
+        return false;
+    }
+
+    return false;
+}
+
+class BytecodeCompiler {
+public:
+    BytecodeCompiler()
+        : program_(), nextSyntheticId_(0) {
+    }
+
+    CompiledProgram compileProgram(const std::vector<std::unique_ptr<Statement> >& program) {
+        program_ = CompiledProgram();
+
+        for (size_t index = 0; index < program.size(); ++index) {
+            if (program[index]->type == Statement::FLOW_DEF) {
+                std::shared_ptr<CompiledFunction> function =
+                    compileCallableBody(program[index]->name, CompiledFunction::FLOW, program[index]->params, program[index]->body);
+                program_.flows[program[index]->name] = function;
+            } else if (program[index]->type == Statement::STAGE_DEF) {
+                std::shared_ptr<CompiledFunction> function =
+                    compileCallableBody(program[index]->name, CompiledFunction::STAGE, program[index]->params, program[index]->body);
+                program_.stages[program[index]->name] = function;
+            } else if (program[index]->type == Statement::TYPE_DEF) {
+                compileError("type definitions are not supported in bytecode mode", program[index]->line);
+            }
+        }
+
+        program_.entry = createFunction("<script>", CompiledFunction::SCRIPT, std::vector<std::string>());
+        FunctionContext context(program_.entry, false);
+        for (size_t index = 0; index < program.size(); ++index) {
+            if (program[index]->type == Statement::FLOW_DEF ||
+                program[index]->type == Statement::STAGE_DEF) {
+                continue;
+            }
+            compileStatement(*program[index], &context);
+        }
+
+        optimizeCompiledProgram(&program_);
+        return program_;
+    }
+
+private:
+    struct FunctionContext {
+        FunctionContext(const std::shared_ptr<CompiledFunction>& compiledFunction, bool placeholderAllowed)
+            : function(compiledFunction), allowPlaceholder(placeholderAllowed), scopeDepth(0), loopDepth(0) {
+        }
+
+        std::shared_ptr<CompiledFunction> function;
+        bool allowPlaceholder;
+        int scopeDepth;
+        int loopDepth;
+    };
+
+    std::shared_ptr<CompiledFunction> createFunction(const std::string& name,
+                                                     CompiledFunction::Kind kind,
+                                                     const std::vector<std::string>& params) {
+        std::shared_ptr<CompiledFunction> function(new CompiledFunction());
+        function->kind = kind;
+        function->name = name;
+        function->params = params;
+        function->syntheticId = ++nextSyntheticId_;
+        program_.functions.push_back(function);
+        return function;
+    }
+
+    std::string syntheticName(const std::string& prefix) {
+        std::ostringstream buffer;
+        buffer << prefix << "#" << (nextSyntheticId_ + 1);
+        return buffer.str();
+    }
+
+    int emit(FunctionContext* context, const BytecodeInstruction& instruction) {
+        context->function->code.push_back(instruction);
+        return static_cast<int>(context->function->code.size()) - 1;
+    }
+
+    int emitJump(FunctionContext* context, BytecodeInstruction::Op op) {
+        BytecodeInstruction instruction(op);
+        instruction.operand = -1;
+        return emit(context, instruction);
+    }
+
+    void patchJump(FunctionContext* context, int location, int target) {
+        context->function->code[static_cast<size_t>(location)].operand = target;
+    }
+
+    [[noreturn]] void compileError(const std::string& message, int line = -1) const {
+        if (line > 0) {
+            throw std::runtime_error("Compile Error(line " + std::to_string(line) + "): " + message);
+        }
+        throw std::runtime_error("Compile Error: " + message);
+    }
+
+    void compileScopedBlock(const std::vector<std::unique_ptr<Statement> >& body, FunctionContext* context) {
+        emit(context, BytecodeInstruction(BytecodeInstruction::PUSH_SCOPE));
+        ++context->scopeDepth;
+        for (size_t index = 0; index < body.size(); ++index) {
+            compileStatement(*body[index], context);
+        }
+        emit(context, BytecodeInstruction(BytecodeInstruction::POP_SCOPE));
+        --context->scopeDepth;
+    }
+
+    std::shared_ptr<CompiledFunction> compileCallableBody(const std::string& name,
+                                                          CompiledFunction::Kind kind,
+                                                          const std::vector<std::string>& params,
+                                                          const std::vector<std::unique_ptr<Statement> >& body) {
+        std::shared_ptr<CompiledFunction> function = createFunction(name, kind, params);
+        FunctionContext context(function, false);
+        for (size_t index = 0; index < body.size(); ++index) {
+            compileStatement(*body[index], &context);
+        }
+        return function;
+    }
+
+    std::shared_ptr<CompiledFunction> compilePipeExpr(const PipeExpr& pipe) {
+        return compileCallableBody(syntheticName("pipe"), CompiledFunction::PIPE, pipe.params, pipe.body);
+    }
+
+    std::shared_ptr<CompiledFunction> compileInlineExpression(const Expr* expr) {
+        std::shared_ptr<CompiledFunction> function =
+            createFunction(syntheticName("pipe_expr"), CompiledFunction::INLINE_EXPR, std::vector<std::string>(1, "__pipe_input__"));
+        FunctionContext context(function, true);
+        compileExpr(expr, &context);
+        emit(&context, BytecodeInstruction(BytecodeInstruction::RETURN_VALUE));
+        return function;
+    }
+
+    bool canCompileExpr(const Expr* expr, bool allowPlaceholder) const {
+        if (dynamic_cast<const LiteralExpr*>(expr) != nullptr ||
+            dynamic_cast<const VariableExpr*>(expr) != nullptr ||
+            dynamic_cast<const IdentifierExpr*>(expr) != nullptr) {
+            return true;
+        }
+
+        if (dynamic_cast<const PlaceholderExpr*>(expr) != nullptr) {
+            return allowPlaceholder;
+        }
+
+        if (const ArrayExpr* array = dynamic_cast<const ArrayExpr*>(expr)) {
+            for (size_t index = 0; index < array->elements.size(); ++index) {
+                if (!canCompileExpr(array->elements[index].get(), allowPlaceholder)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (const DictExpr* dict = dynamic_cast<const DictExpr*>(expr)) {
+            for (size_t index = 0; index < dict->entries.size(); ++index) {
+                if (!canCompileExpr(dict->entries[index].second.get(), allowPlaceholder)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+            return (unary->op == "!" || unary->op == "-") &&
+                   canCompileExpr(unary->right.get(), allowPlaceholder);
+        }
+
+        if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+            return canCompileExpr(binary->left.get(), allowPlaceholder) &&
+                   canCompileExpr(binary->right.get(), allowPlaceholder);
+        }
+
+        if (const AssignExpr* assign = dynamic_cast<const AssignExpr*>(expr)) {
+            return dynamic_cast<const VariableExpr*>(assign->target.get()) != nullptr &&
+                   canCompileExpr(assign->value.get(), allowPlaceholder);
+        }
+
+        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
+            return canCompileExpr(member->object.get(), allowPlaceholder);
+        }
+
+        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
+            return canCompileExpr(index->container.get(), allowPlaceholder) &&
+                   canCompileExpr(index->index.get(), allowPlaceholder);
+        }
+
+        if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
+            if (!canCompileExpr(call->callee.get(), allowPlaceholder)) {
+                return false;
+            }
+            for (size_t index = 0; index < call->args.size(); ++index) {
+                if (!canCompileExpr(call->args[index].get(), allowPlaceholder)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (const PipelineExpr* pipeline = dynamic_cast<const PipelineExpr*>(expr)) {
+            if (!canCompileExpr(pipeline->source.get(), false)) {
+                return false;
+            }
+            for (size_t index = 0; index < pipeline->stages.size(); ++index) {
+                const bool stageHasPlaceholder = expressionContainsPlaceholder(pipeline->stages[index].expr.get());
+                if (!canCompileExpr(pipeline->stages[index].expr.get(), stageHasPlaceholder)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (dynamic_cast<const PipeExpr*>(expr) != nullptr) {
+            return true;
+        }
+
+        return false;
+    }
+
+    void compileStatement(const Statement& statement, FunctionContext* context) {
+        switch (statement.type) {
+            case Statement::EXPR:
+                compileExpr(statement.expr.get(), context);
+                emit(context, BytecodeInstruction(BytecodeInstruction::POP));
+                return;
+            case Statement::WHEN: {
+                compileExpr(statement.expr.get(), context);
+                const int jumpToElse = emitJump(context, BytecodeInstruction::JUMP_IF_FALSE);
+                compileScopedBlock(statement.body, context);
+                const int jumpToEnd = emitJump(context, BytecodeInstruction::JUMP);
+                patchJump(context, jumpToElse, static_cast<int>(context->function->code.size()));
+                compileScopedBlock(statement.elseBody, context);
+                patchJump(context, jumpToEnd, static_cast<int>(context->function->code.size()));
+                return;
+            }
+            case Statement::WHILE_LOOP: {
+                const int loopStart = static_cast<int>(context->function->code.size());
+                compileExpr(statement.expr.get(), context);
+                const int jumpToEnd = emitJump(context, BytecodeInstruction::JUMP_IF_FALSE);
+
+                BytecodeInstruction enter(BytecodeInstruction::LOOP_ENTER);
+                const int loopEnter = emit(context, enter);
+
+                ++context->loopDepth;
+                compileScopedBlock(statement.body, context);
+                --context->loopDepth;
+
+                const int continueTarget = static_cast<int>(context->function->code.size());
+                emit(context, BytecodeInstruction(BytecodeInstruction::LOOP_EXIT));
+
+                BytecodeInstruction loopJump(BytecodeInstruction::JUMP);
+                loopJump.operand = loopStart;
+                emit(context, loopJump);
+
+                const int breakTarget = static_cast<int>(context->function->code.size());
+                emit(context, BytecodeInstruction(BytecodeInstruction::LOOP_EXIT));
+
+                const int endTarget = static_cast<int>(context->function->code.size());
+                patchJump(context, jumpToEnd, endTarget);
+                context->function->code[static_cast<size_t>(loopEnter)].operand = breakTarget;
+                context->function->code[static_cast<size_t>(loopEnter)].operand2 = continueTarget;
+                return;
+            }
+            case Statement::RETURN: {
+                if (statement.expr.get() == nullptr) {
+                    BytecodeInstruction nilValue(BytecodeInstruction::PUSH_CONST);
+                    nilValue.constant = Value();
+                    emit(context, nilValue);
+                } else {
+                    compileExpr(statement.expr.get(), context);
+                }
+                emit(context, BytecodeInstruction(BytecodeInstruction::RETURN_VALUE));
+                return;
+            }
+            case Statement::BREAK_LOOP:
+                if (context->loopDepth > 0) {
+                    emit(context, BytecodeInstruction(BytecodeInstruction::LOOP_BREAK));
+                } else {
+                    compileError("break can only be used inside while", statement.line);
+                }
+                return;
+            case Statement::CONTINUE_LOOP:
+                if (context->loopDepth > 0) {
+                    emit(context, BytecodeInstruction(BytecodeInstruction::LOOP_CONTINUE));
+                } else {
+                    compileError("continue can only be used inside while", statement.line);
+                }
+                return;
+            case Statement::FLOW_DEF:
+            case Statement::STAGE_DEF:
+                compileError("nested flow or stage definitions are not supported in bytecode mode", statement.line);
+            case Statement::TYPE_DEF:
+                compileError("type definitions are not supported in bytecode mode", statement.line);
+            case Statement::MATCH:
+                compileError("match is not supported in bytecode mode", statement.line);
+            case Statement::FOR_LOOP:
+                compileError("for loops are not supported in bytecode mode", statement.line);
+            case Statement::DEFER:
+                compileError("defer is not supported in bytecode mode", statement.line);
+            default:
+                compileError("unsupported statement in bytecode mode", statement.line);
+        }
+    }
+
+    void compileCall(const CallExpr& call, FunctionContext* context) {
+        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(call.callee.get())) {
+            if (identifier->name == "read_file") {
+                compileError("read_file is disabled in sandbox mode");
+            }
+            for (size_t index = 0; index < call.args.size(); ++index) {
+                compileExpr(call.args[index].get(), context);
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::CALL_NAMED);
+            instruction.text = identifier->name;
+            instruction.operand = static_cast<int>(call.args.size());
+            emit(context, instruction);
+            return;
+        }
+
+        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(call.callee.get())) {
+            compileExpr(member->object.get(), context);
+            for (size_t index = 0; index < call.args.size(); ++index) {
+                compileExpr(call.args[index].get(), context);
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::CALL_MEMBER);
+            instruction.text = member->memberName;
+            instruction.operand = static_cast<int>(call.args.size());
+            emit(context, instruction);
+            return;
+        }
+
+        compileExpr(call.callee.get(), context);
+        for (size_t index = 0; index < call.args.size(); ++index) {
+            compileExpr(call.args[index].get(), context);
+        }
+        BytecodeInstruction instruction(BytecodeInstruction::CALL_VALUE);
+        instruction.operand = static_cast<int>(call.args.size());
+        emit(context, instruction);
+    }
+
+    void compilePipelineStage(const PipelineExpr::Stage& stage, FunctionContext* context) {
+        if (expressionContainsPlaceholder(stage.expr.get())) {
+            if (canCompileExpr(stage.expr.get(), true)) {
+                BytecodeInstruction instruction(BytecodeInstruction::PIPE_INLINE_EXPR);
+                instruction.function = compileInlineExpression(stage.expr.get());
+                instruction.flag = stage.op == "|?";
+                emit(context, instruction);
+            } else {
+                compileError("pipeline placeholder stage uses an unsupported expression");
+            }
+            return;
+        }
+
+        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(stage.expr.get())) {
+            if (identifier->name == "read_file") {
+                compileError("read_file is disabled in sandbox mode");
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::PIPE_NAMED);
+            instruction.text = identifier->name;
+            instruction.operand = 0;
+            instruction.flag = stage.op == "|?";
+            emit(context, instruction);
+            return;
+        }
+
+        if (const CallExpr* call = dynamic_cast<const CallExpr*>(stage.expr.get())) {
+            if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(call->callee.get())) {
+                if (identifier->name == "read_file") {
+                    compileError("read_file is disabled in sandbox mode");
+                }
+                for (size_t index = 0; index < call->args.size(); ++index) {
+                    compileExpr(call->args[index].get(), context);
+                }
+                BytecodeInstruction instruction(BytecodeInstruction::PIPE_NAMED);
+                instruction.text = identifier->name;
+                instruction.operand = static_cast<int>(call->args.size());
+                instruction.flag = stage.op == "|?";
+                emit(context, instruction);
+                return;
+            }
+
+            compileExpr(call->callee.get(), context);
+            for (size_t index = 0; index < call->args.size(); ++index) {
+                compileExpr(call->args[index].get(), context);
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::PIPE_VALUE);
+            instruction.operand = static_cast<int>(call->args.size());
+            instruction.flag = stage.op == "|?";
+            emit(context, instruction);
+            return;
+        }
+
+        compileExpr(stage.expr.get(), context);
+        BytecodeInstruction instruction(BytecodeInstruction::PIPE_VALUE);
+        instruction.operand = 0;
+        instruction.flag = stage.op == "|?";
+        emit(context, instruction);
+    }
+
+    void compileExpr(const Expr* expr, FunctionContext* context) {
+        if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(expr)) {
+            BytecodeInstruction instruction(BytecodeInstruction::PUSH_CONST);
+            instruction.constant = literal->value;
+            emit(context, instruction);
+            return;
+        }
+
+        if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr)) {
+            BytecodeInstruction instruction(BytecodeInstruction::LOAD_VAR);
+            instruction.text = variable->name;
+            emit(context, instruction);
+            return;
+        }
+
+        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(expr)) {
+            BytecodeInstruction instruction(BytecodeInstruction::PUSH_CONST);
+            instruction.constant = Value(identifier->name);
+            emit(context, instruction);
+            return;
+        }
+
+        if (dynamic_cast<const PlaceholderExpr*>(expr) != nullptr) {
+            if (!context->allowPlaceholder) {
+                compileError("placeholder '_' can only be used inside the right side of a pipeline");
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::LOAD_VAR);
+            instruction.text = "__pipe_input__";
+            emit(context, instruction);
+            return;
+        }
+
+        if (const ArrayExpr* array = dynamic_cast<const ArrayExpr*>(expr)) {
+            for (size_t index = 0; index < array->elements.size(); ++index) {
+                compileExpr(array->elements[index].get(), context);
+            }
+            BytecodeInstruction instruction(BytecodeInstruction::MAKE_ARRAY);
+            instruction.operand = static_cast<int>(array->elements.size());
+            emit(context, instruction);
+            return;
+        }
+
+        if (const DictExpr* dict = dynamic_cast<const DictExpr*>(expr)) {
+            BytecodeInstruction instruction(BytecodeInstruction::MAKE_DICT);
+            instruction.operand = static_cast<int>(dict->entries.size());
+            instruction.names.reserve(dict->entries.size());
+            for (size_t index = 0; index < dict->entries.size(); ++index) {
+                compileExpr(dict->entries[index].second.get(), context);
+                instruction.names.push_back(dict->entries[index].first);
+            }
+            emit(context, instruction);
+            return;
+        }
+
+        if (const PipeExpr* pipe = dynamic_cast<const PipeExpr*>(expr)) {
+            BytecodeInstruction instruction(BytecodeInstruction::MAKE_PIPE);
+            instruction.function = compilePipeExpr(*pipe);
+            emit(context, instruction);
+            return;
+        }
+
+        if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+            compileExpr(unary->right.get(), context);
+            if (unary->op == "!") {
+                emit(context, BytecodeInstruction(BytecodeInstruction::UNARY_NOT));
+                return;
+            }
+            if (unary->op == "-") {
+                emit(context, BytecodeInstruction(BytecodeInstruction::UNARY_NEG));
+                return;
+            }
+        }
+
+        if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+            if (binary->op == "&&") {
+                compileExpr(binary->left.get(), context);
+                const int jumpToFalse = emitJump(context, BytecodeInstruction::JUMP_IF_FALSE);
+                compileExpr(binary->right.get(), context);
+                emit(context, BytecodeInstruction(BytecodeInstruction::TRUTHY));
+                const int jumpToEnd = emitJump(context, BytecodeInstruction::JUMP);
+                patchJump(context, jumpToFalse, static_cast<int>(context->function->code.size()));
+                BytecodeInstruction pushFalse(BytecodeInstruction::PUSH_CONST);
+                pushFalse.constant = Value(false);
+                emit(context, pushFalse);
+                patchJump(context, jumpToEnd, static_cast<int>(context->function->code.size()));
+                return;
+            }
+
+            if (binary->op == "||") {
+                compileExpr(binary->left.get(), context);
+                const int jumpToTrue = emitJump(context, BytecodeInstruction::JUMP_IF_TRUE);
+                compileExpr(binary->right.get(), context);
+                emit(context, BytecodeInstruction(BytecodeInstruction::TRUTHY));
+                const int jumpToEnd = emitJump(context, BytecodeInstruction::JUMP);
+                patchJump(context, jumpToTrue, static_cast<int>(context->function->code.size()));
+                BytecodeInstruction pushTrue(BytecodeInstruction::PUSH_CONST);
+                pushTrue.constant = Value(true);
+                emit(context, pushTrue);
+                patchJump(context, jumpToEnd, static_cast<int>(context->function->code.size()));
+                return;
+            }
+
+            compileExpr(binary->left.get(), context);
+            compileExpr(binary->right.get(), context);
+            BytecodeInstruction instruction(BytecodeInstruction::BINARY_OP);
+            instruction.text = binary->op;
+            emit(context, instruction);
+            return;
+        }
+
+        if (const AssignExpr* assign = dynamic_cast<const AssignExpr*>(expr)) {
+            if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(assign->target.get())) {
+                if (assign->op == "=") {
+                    compileExpr(assign->value.get(), context);
+                } else {
+                    BytecodeInstruction load(BytecodeInstruction::LOAD_VAR);
+                    load.text = variable->name;
+                    emit(context, load);
+                    compileExpr(assign->value.get(), context);
+                    BytecodeInstruction combine(BytecodeInstruction::ASSIGN_OP);
+                    combine.text = assign->op;
+                    emit(context, combine);
+                }
+                BytecodeInstruction store(BytecodeInstruction::STORE_VAR_KEEP);
+                store.text = variable->name;
+                emit(context, store);
+                return;
+            }
+            compileError("only variable assignment is supported in bytecode mode");
+        }
+
+        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
+            compileExpr(member->object.get(), context);
+            BytecodeInstruction instruction(BytecodeInstruction::GET_MEMBER);
+            instruction.text = member->memberName;
+            emit(context, instruction);
+            return;
+        }
+
+        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
+            compileExpr(index->container.get(), context);
+            compileExpr(index->index.get(), context);
+            emit(context, BytecodeInstruction(BytecodeInstruction::GET_INDEX));
+            return;
+        }
+
+        if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
+            compileCall(*call, context);
+            return;
+        }
+
+        if (const PipelineExpr* pipeline = dynamic_cast<const PipelineExpr*>(expr)) {
+            compileExpr(pipeline->source.get(), context);
+            for (size_t index = 0; index < pipeline->stages.size(); ++index) {
+                compilePipelineStage(pipeline->stages[index], context);
+            }
+            return;
+        }
+
+        compileError("unsupported expression in bytecode mode");
+    }
+
+    CompiledProgram program_;
+    int nextSyntheticId_;
+};
+
+static std::string compiledFunctionKindName(CompiledFunction::Kind kind) {
+    switch (kind) {
+        case CompiledFunction::SCRIPT:
+            return "script";
+        case CompiledFunction::FLOW:
+            return "flow";
+        case CompiledFunction::STAGE:
+            return "stage";
+        case CompiledFunction::PIPE:
+            return "pipe";
+        case CompiledFunction::INLINE_EXPR:
+            return "inline-expr";
+        default:
+            return "unknown";
+    }
+}
+
+static std::string bytecodeInstructionSummary(const BytecodeInstruction& instruction) {
+    std::ostringstream buffer;
+    switch (instruction.op) {
+        case BytecodeInstruction::PUSH_CONST:
+            buffer << "PUSH_CONST " << instruction.constant.toString();
+            break;
+        case BytecodeInstruction::LOAD_VAR:
+            buffer << "LOAD_VAR $" << instruction.text;
+            break;
+        case BytecodeInstruction::STORE_VAR_KEEP:
+            buffer << "STORE_VAR_KEEP $" << instruction.text;
+            break;
+        case BytecodeInstruction::MAKE_ARRAY:
+            buffer << "MAKE_ARRAY " << instruction.operand;
+            break;
+        case BytecodeInstruction::MAKE_DICT:
+            buffer << "MAKE_DICT " << instruction.operand;
+            break;
+        case BytecodeInstruction::UNARY_NOT:
+            buffer << "UNARY_NOT";
+            break;
+        case BytecodeInstruction::UNARY_NEG:
+            buffer << "UNARY_NEG";
+            break;
+        case BytecodeInstruction::BINARY_OP:
+            buffer << "BINARY_OP " << instruction.text;
+            break;
+        case BytecodeInstruction::ASSIGN_OP:
+            buffer << "ASSIGN_OP " << instruction.text;
+            break;
+        case BytecodeInstruction::GET_MEMBER:
+            buffer << "GET_MEMBER ." << instruction.text;
+            break;
+        case BytecodeInstruction::GET_INDEX:
+            buffer << "GET_INDEX";
+            break;
+        case BytecodeInstruction::CALL_NAMED:
+            buffer << "CALL_NAMED " << instruction.text << " argc=" << instruction.operand;
+            break;
+        case BytecodeInstruction::CALL_MEMBER:
+            buffer << "CALL_MEMBER ." << instruction.text << " argc=" << instruction.operand;
+            break;
+        case BytecodeInstruction::CALL_VALUE:
+            buffer << "CALL_VALUE argc=" << instruction.operand;
+            break;
+        case BytecodeInstruction::MAKE_PIPE:
+            buffer << "MAKE_PIPE " << (instruction.function.get() == nullptr ? "<null>" : instruction.function->name);
+            break;
+        case BytecodeInstruction::PUSH_SCOPE:
+            buffer << "PUSH_SCOPE";
+            break;
+        case BytecodeInstruction::POP_SCOPE:
+            buffer << "POP_SCOPE";
+            break;
+        case BytecodeInstruction::JUMP:
+            buffer << "JUMP " << instruction.operand;
+            break;
+        case BytecodeInstruction::JUMP_IF_FALSE:
+            buffer << "JUMP_IF_FALSE " << instruction.operand;
+            break;
+        case BytecodeInstruction::JUMP_IF_TRUE:
+            buffer << "JUMP_IF_TRUE " << instruction.operand;
+            break;
+        case BytecodeInstruction::TRUTHY:
+            buffer << "TRUTHY";
+            break;
+        case BytecodeInstruction::PIPE_NAMED:
+            buffer << (instruction.flag ? "PIPE_NAMED_SAFE " : "PIPE_NAMED ")
+                   << instruction.text << " argc=" << instruction.operand;
+            break;
+        case BytecodeInstruction::PIPE_VALUE:
+            buffer << (instruction.flag ? "PIPE_VALUE_SAFE " : "PIPE_VALUE ")
+                   << "argc=" << instruction.operand;
+            break;
+        case BytecodeInstruction::PIPE_INLINE_EXPR:
+            buffer << (instruction.flag ? "PIPE_INLINE_EXPR_SAFE " : "PIPE_INLINE_EXPR ")
+                   << (instruction.function.get() == nullptr ? "<null>" : instruction.function->name);
+            break;
+        case BytecodeInstruction::LOOP_ENTER:
+            buffer << "LOOP_ENTER break=" << instruction.operand << " continue=" << instruction.operand2;
+            break;
+        case BytecodeInstruction::LOOP_EXIT:
+            buffer << "LOOP_EXIT";
+            break;
+        case BytecodeInstruction::LOOP_BREAK:
+            buffer << "LOOP_BREAK";
+            break;
+        case BytecodeInstruction::LOOP_CONTINUE:
+            buffer << "LOOP_CONTINUE";
+            break;
+        case BytecodeInstruction::RETURN_VALUE:
+            buffer << "RETURN_VALUE";
+            break;
+        case BytecodeInstruction::POP:
+            buffer << "POP";
+            break;
+        default:
+            buffer << "UNKNOWN";
+            break;
+    }
+    return buffer.str();
+}
+
+static std::string disassembleCompiledProgram(const CompiledProgram& program) {
+    std::ostringstream output;
+    for (size_t fnIndex = 0; fnIndex < program.functions.size(); ++fnIndex) {
+        const CompiledFunction& function = *program.functions[fnIndex];
+        output << "== " << compiledFunctionKindName(function.kind) << " " << function.name;
+        if (!function.params.empty()) {
+            output << "(";
+            for (size_t index = 0; index < function.params.size(); ++index) {
+                if (index > 0) {
+                    output << ", ";
+                }
+                output << function.params[index];
+            }
+            output << ")";
+        }
+        output << " ==\n";
+        for (size_t ip = 0; ip < function.code.size(); ++ip) {
+            output << ip << ": " << bytecodeInstructionSummary(function.code[ip]) << "\n";
+        }
+        if (fnIndex + 1 < program.functions.size()) {
+            output << "\n";
+        }
+    }
+    return output.str();
+}
+
+void BytecodeVirtualMachine::executeProgram(Interpreter* runtime,
+                                           const CompiledProgram& compiled) {
+    for (std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator it = compiled.flows.begin();
+         it != compiled.flows.end();
+         ++it) {
+        runtime->compiledFlows_[it->first] = it->second;
+    }
+
+    for (std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator it = compiled.stages.begin();
+         it != compiled.stages.end();
+         ++it) {
+        runtime->compiledStages_[it->first] = it->second;
+    }
+
+    if (compiled.entry.get() != nullptr) {
+        runFunction(runtime, *compiled.entry, std::vector<Value>(), nullptr, nullptr, nullptr, false, false);
+    }
+}
+
+Value BytecodeVirtualMachine::runFlow(Interpreter* runtime,
+                                      const CompiledFunction& function,
+                                      const std::vector<Value>& args,
+                                      const Value* self) {
+    return runFunction(runtime, function, args, nullptr, self, nullptr, true, true);
+}
+
+Value BytecodeVirtualMachine::runStage(Interpreter* runtime,
+                                       const CompiledFunction& function,
+                                       const Value& input,
+                                       const std::vector<Value>& args) {
+    return runFunction(runtime, function, args, nullptr, nullptr, &input, true, true);
+}
+
+Value BytecodeVirtualMachine::runPipe(Interpreter* runtime,
+                                      const CompiledFunction& function,
+                                      const std::unordered_map<std::string, Value>& captured,
+                                      const std::vector<Value>& args) {
+    return runFunction(runtime, function, args, &captured, nullptr, nullptr, true, true);
+}
+
+Value BytecodeVirtualMachine::runInlinePipeExpr(Interpreter* runtime,
+                                                const CompiledFunction& function,
+                                                const Value& input) {
+    return runFunction(runtime,
+                       function,
+                       std::vector<Value>(1, input),
+                       nullptr,
+                       nullptr,
+                       nullptr,
+                       true,
+                       false);
+}
+
+Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
+                                          const CompiledFunction& function,
+                                          const std::vector<Value>& args,
+                                          const std::unordered_map<std::string, Value>* captured,
+                                          const Value* self,
+                                          const Value* stageInput,
+                                          bool createScope,
+                                          bool incrementCallDepth) {
+    struct LoopState {
+        int breakTarget;
+        int continueTarget;
+        int scopeDepthAtEntry;
+    };
+
+    struct FrameState {
+        FrameState() : stack(), loops(), scopeDepth(0) {
+        }
+
+        std::vector<Value> stack;
+        std::vector<LoopState> loops;
+        int scopeDepth;
+    };
+
+    const std::string functionLabel = function.kind == CompiledFunction::FLOW ? "flow '" + function.name + "'" :
+                                      function.kind == CompiledFunction::STAGE ? "stage '" + function.name + "'" :
+                                      function.kind == CompiledFunction::PIPE ? "pipe" :
+                                      function.kind == CompiledFunction::INLINE_EXPR ? "inline expression" :
+                                      "script";
+
+    if (function.kind != CompiledFunction::SCRIPT && args.size() != function.params.size()) {
+        runtime->runtimeError(functionLabel + " expected " + std::to_string(function.params.size()) +
+                              " arguments but received " + std::to_string(args.size()));
+    }
+
+    const Value defaultReturn = (function.kind == CompiledFunction::STAGE && stageInput != nullptr) ? *stageInput : Value();
+
+    FrameState frame;
+    bool pushedFunctionScope = false;
+    bool incrementedCallDepth = false;
+
+    struct ScopeExit {
+        explicit ScopeExit(Interpreter* interpreter, bool* activeFlag)
+            : runtime(interpreter), active(activeFlag) {
+        }
+
+        ~ScopeExit() {
+            if (*active) {
+                runtime->popScope();
+            }
+        }
+
+        Interpreter* runtime;
+        bool* active;
+    };
+
+    struct CallDepthExit {
+        explicit CallDepthExit(Interpreter* interpreter, bool* activeFlag)
+            : runtime(interpreter), active(activeFlag) {
+        }
+
+        ~CallDepthExit() {
+            if (*active) {
+                --runtime->callDepth_;
+            }
+        }
+
+        Interpreter* runtime;
+        bool* active;
+    };
+
+    ScopeExit scopeGuard(runtime, &pushedFunctionScope);
+    CallDepthExit callDepthGuard(runtime, &incrementedCallDepth);
+
+    if (createScope) {
+        runtime->pushScope();
+        pushedFunctionScope = true;
+        if (captured != nullptr) {
+            runtime->currentScope().vars = *captured;
+        }
+        if (self != nullptr) {
+            runtime->currentScope().vars["self"] = *self;
+        }
+        if (stageInput != nullptr) {
+            runtime->currentScope().vars["it"] = *stageInput;
+        }
+        for (size_t index = 0; index < function.params.size(); ++index) {
+            runtime->currentScope().vars[function.params[index]] = args[index];
+        }
+    }
+
+    if (incrementCallDepth) {
+        ++runtime->callDepth_;
+        incrementedCallDepth = true;
+    }
+
+    const auto popValue = [&frame, runtime]() -> Value {
+        if (frame.stack.empty()) {
+            runtime->runtimeError("bytecode stack underflow");
+        }
+        const Value value = frame.stack.back();
+        frame.stack.pop_back();
+        return value;
+    };
+
+    const auto popArgs = [&frame, &popValue](int count) -> std::vector<Value> {
+        std::vector<Value> values(static_cast<size_t>(count));
+        for (int index = count - 1; index >= 0; --index) {
+            values[static_cast<size_t>(index)] = popValue();
+        }
+        return values;
+    };
+
+    const auto popScopesTo = [&frame, runtime](int targetDepth) {
+        while (frame.scopeDepth > targetDepth) {
+            runtime->popScope();
+            --frame.scopeDepth;
+        }
+    };
+
+    const auto runSafePipe = [runtime](const Value& value,
+                                       const std::function<Value(const Value&)>& action) -> Value {
+        if (value.type == Value::RESULT_ERR) {
+            return value;
+        }
+
+        Value current = value;
+        if (current.type == Value::RESULT_OK && current.resultValue.get() != nullptr) {
+            current = *current.resultValue;
+        }
+
+        try {
+            Value result = action(current);
+            if (result.type != Value::RESULT_OK && result.type != Value::RESULT_ERR) {
+                result = Value::Ok(result);
+            }
+            return result;
+        } catch (const std::runtime_error& error) {
+            return Value::Err(Value(std::string(error.what())));
+        }
+    };
+
+    size_t ip = 0;
+    try {
+        while (ip < function.code.size()) {
+            const BytecodeInstruction& instruction = function.code[ip];
+            ++ip;
+
+            try {
+                switch (instruction.op) {
+                    case BytecodeInstruction::PUSH_CONST:
+                        frame.stack.push_back(instruction.constant);
+                        break;
+                    case BytecodeInstruction::LOAD_VAR:
+                        frame.stack.push_back(runtime->getVariable(instruction.text));
+                        break;
+                    case BytecodeInstruction::STORE_VAR_KEEP:
+                        if (frame.stack.empty()) {
+                            runtime->runtimeError("bytecode stack underflow");
+                        }
+                        runtime->storeVariable(instruction.text, frame.stack.back());
+                        break;
+                    case BytecodeInstruction::MAKE_ARRAY: {
+                        std::vector<Value> values(static_cast<size_t>(instruction.operand));
+                        for (int index = instruction.operand - 1; index >= 0; --index) {
+                            values[static_cast<size_t>(index)] = popValue();
+                        }
+                        frame.stack.push_back(Value(values));
+                        break;
+                    }
+                    case BytecodeInstruction::MAKE_DICT: {
+                        std::unordered_map<std::string, Value> values;
+                        for (int index = instruction.operand - 1; index >= 0; --index) {
+                            values[instruction.names[static_cast<size_t>(index)]] = popValue();
+                        }
+                        frame.stack.push_back(Value(values));
+                        break;
+                    }
+                    case BytecodeInstruction::UNARY_NOT: {
+                        const Value right = popValue();
+                        frame.stack.push_back(Value(!right.isTruthy()));
+                        break;
+                    }
+                    case BytecodeInstruction::UNARY_NEG: {
+                        const Value right = popValue();
+                        frame.stack.push_back(Value(-runtime->requireInt(right, "unary '-'")));
+                        break;
+                    }
+                    case BytecodeInstruction::BINARY_OP: {
+                        const Value right = popValue();
+                        const Value left = popValue();
+                        frame.stack.push_back(runtime->applyBinaryOperator(left, instruction.text, right));
+                        break;
+                    }
+                    case BytecodeInstruction::ASSIGN_OP: {
+                        const Value right = popValue();
+                        const Value left = popValue();
+                        frame.stack.push_back(runtime->applyAssignmentOperator(left, instruction.text, right));
+                        break;
+                    }
+                    case BytecodeInstruction::GET_MEMBER: {
+                        const Value object = popValue();
+                        frame.stack.push_back(runtime->readMember(object, instruction.text));
+                        break;
+                    }
+                    case BytecodeInstruction::GET_INDEX: {
+                        const Value key = popValue();
+                        const Value container = popValue();
+                        frame.stack.push_back(runtime->readIndexedValue(container, key, "index access"));
+                        break;
+                    }
+                    case BytecodeInstruction::CALL_NAMED: {
+                        const std::vector<Value> callArgs = popArgs(instruction.operand);
+                        frame.stack.push_back(runtime->invokeIdentifierCall(instruction.text, callArgs));
+                        break;
+                    }
+                    case BytecodeInstruction::CALL_MEMBER: {
+                        const std::vector<Value> callArgs = popArgs(instruction.operand);
+                        const Value object = popValue();
+                        frame.stack.push_back(
+                            runtime->invokeCallableValue(runtime->readMember(object, instruction.text), callArgs, "call"));
+                        break;
+                    }
+                    case BytecodeInstruction::CALL_VALUE: {
+                        const std::vector<Value> callArgs = popArgs(instruction.operand);
+                        const Value callee = popValue();
+                        frame.stack.push_back(runtime->invokeCallableValue(callee, callArgs, "call"));
+                        break;
+                    }
+                    case BytecodeInstruction::MAKE_PIPE: {
+                        if (instruction.function.get() == nullptr) {
+                            runtime->runtimeError("compiled pipe has no body");
+                        }
+                        const std::unordered_map<std::string, Value> capturedValues = runtime->captureVisibleVars();
+                        frame.stack.push_back(Value(std::shared_ptr<CallableData>(
+                            new CallableData(instruction.function->params, instruction.function, capturedValues))));
+                        break;
+                    }
+                    case BytecodeInstruction::PUSH_SCOPE:
+                        runtime->pushScope();
+                        ++frame.scopeDepth;
+                        break;
+                    case BytecodeInstruction::POP_SCOPE:
+                        if (frame.scopeDepth <= 0) {
+                            runtime->runtimeError("bytecode scope underflow");
+                        }
+                        runtime->popScope();
+                        --frame.scopeDepth;
+                        break;
+                    case BytecodeInstruction::JUMP:
+                        ip = static_cast<size_t>(instruction.operand);
+                        break;
+                    case BytecodeInstruction::JUMP_IF_FALSE: {
+                        const Value condition = popValue();
+                        if (!condition.isTruthy()) {
+                            ip = static_cast<size_t>(instruction.operand);
+                        }
+                        break;
+                    }
+                    case BytecodeInstruction::JUMP_IF_TRUE: {
+                        const Value condition = popValue();
+                        if (condition.isTruthy()) {
+                            ip = static_cast<size_t>(instruction.operand);
+                        }
+                        break;
+                    }
+                    case BytecodeInstruction::TRUTHY: {
+                        const Value condition = popValue();
+                        frame.stack.push_back(Value(condition.isTruthy()));
+                        break;
+                    }
+                    case BytecodeInstruction::PIPE_NAMED: {
+                        const std::vector<Value> stageArgs = popArgs(instruction.operand);
+                        const Value input = popValue();
+                        const std::function<Value(const Value&)> action =
+                            [runtime, &instruction, &stageArgs](const Value& current) -> Value {
+                                return runtime->runNamedStage(instruction.text, current, stageArgs);
+                            };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        break;
+                    }
+                    case BytecodeInstruction::PIPE_VALUE: {
+                        const std::vector<Value> stageArgs = popArgs(instruction.operand);
+                        const Value callee = popValue();
+                        const Value input = popValue();
+                        const std::function<Value(const Value&)> action =
+                            [runtime, &callee, &stageArgs](const Value& current) -> Value {
+                                return runtime->invokePipeCallable(callee, current, stageArgs, "pipeline target");
+                            };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        break;
+                    }
+                    case BytecodeInstruction::PIPE_INLINE_EXPR: {
+                        if (instruction.function.get() == nullptr) {
+                            runtime->runtimeError("compiled pipe expression has no body");
+                        }
+                        const Value input = popValue();
+                        const std::function<Value(const Value&)> action =
+                            [runtime, &instruction](const Value& current) -> Value {
+                                return runInlinePipeExpr(runtime, *instruction.function, current);
+                            };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        break;
+                    }
+                    case BytecodeInstruction::LOOP_ENTER: {
+                        LoopState state;
+                        state.breakTarget = instruction.operand;
+                        state.continueTarget = instruction.operand2;
+                        state.scopeDepthAtEntry = frame.scopeDepth;
+                        frame.loops.push_back(state);
+                        break;
+                    }
+                    case BytecodeInstruction::LOOP_EXIT:
+                        if (frame.loops.empty()) {
+                            runtime->runtimeError("bytecode loop underflow");
+                        }
+                        frame.loops.pop_back();
+                        break;
+                    case BytecodeInstruction::LOOP_BREAK:
+                        if (frame.loops.empty()) {
+                            runtime->runtimeError("break can only be used inside while or for");
+                        }
+                        popScopesTo(frame.loops.back().scopeDepthAtEntry);
+                        ip = static_cast<size_t>(frame.loops.back().breakTarget);
+                        break;
+                    case BytecodeInstruction::LOOP_CONTINUE:
+                        if (frame.loops.empty()) {
+                            runtime->runtimeError("continue can only be used inside while or for");
+                        }
+                        popScopesTo(frame.loops.back().scopeDepthAtEntry);
+                        ip = static_cast<size_t>(frame.loops.back().continueTarget);
+                        break;
+                    case BytecodeInstruction::RETURN_VALUE: {
+                        const Value value = popValue();
+                        if (!incrementCallDepth && function.kind != CompiledFunction::INLINE_EXPR) {
+                            runtime->runtimeError("give can only be used inside flow, stream/stage, or method bodies");
+                        }
+                        popScopesTo(0);
+                        throw ReturnSignal(value);
+                    }
+                    case BytecodeInstruction::POP:
+                        popValue();
+                        break;
+                    default:
+                        runtime->runtimeError("unknown bytecode instruction");
+                }
+            } catch (const ContinueSignal&) {
+                if (frame.loops.empty()) {
+                    throw;
+                }
+                popScopesTo(frame.loops.back().scopeDepthAtEntry);
+                ip = static_cast<size_t>(frame.loops.back().continueTarget);
+            } catch (const BreakSignal&) {
+                if (frame.loops.empty()) {
+                    throw;
+                }
+                popScopesTo(frame.loops.back().scopeDepthAtEntry);
+                ip = static_cast<size_t>(frame.loops.back().breakTarget);
+            }
+        }
+    } catch (const ReturnSignal& signal) {
+        popScopesTo(0);
+        return signal.value;
+    } catch (...) {
+        popScopesTo(0);
+        throw;
+    }
+
+    popScopesTo(0);
+    return defaultReturn;
+}
 
 }
 
@@ -4932,11 +6530,17 @@ std::vector<std::unique_ptr<aethe::Statement> > parseProgram(const std::string& 
     return parser.parseProgram();
 }
 
-/**
- * @brief 判断缓冲区是否只包含空白字符。
- * @param text 需要检查的缓冲区文本。
- * @return 当缓冲区去除空白后为空时返回 `true`。
- */
+void executeCompiledProgram(const std::vector<std::unique_ptr<aethe::Statement> >& program,
+                            aethe::Interpreter* interpreter,
+                            std::string* bytecodeDump = nullptr) {
+    aethe::BytecodeCompiler compiler;
+    const aethe::CompiledProgram compiled = compiler.compileProgram(program);
+    if (bytecodeDump != nullptr) {
+        *bytecodeDump = aethe::disassembleCompiledProgram(compiled);
+    }
+    aethe::BytecodeVirtualMachine::executeProgram(interpreter, compiled);
+}
+
 bool isOnlyWhitespace(const std::string& text) {
     for (size_t index = 0; index < text.size(); ++index) {
         if (!std::isspace(static_cast<unsigned char>(text[index]))) {
@@ -4944,65 +6548,6 @@ bool isOnlyWhitespace(const std::string& text) {
         }
     }
     return true;
-}
-
-/**
- * @brief 判断 REPL 当前缓冲区是否已经形成完整代码块。
- * @param source 当前缓存的用户输入。
- * @return 当该代码块可以作为完整单元解析时返回 `true`。
- */
-bool isCompleteChunk(const std::string& source) {
-    int braceDepth = 0;
-    char lastMeaningful = '\0';
-    bool inString = false;
-    bool escape = false;
-
-    for (size_t index = 0; index < source.size(); ++index) {
-        const char current = source[index];
-
-        if (inString) {
-            if (escape) {
-                escape = false;
-                continue;
-            }
-            if (current == '\\') {
-                escape = true;
-                continue;
-            }
-            if (current == '"') {
-                inString = false;
-            }
-            continue;
-        }
-
-        if (current == '/' && index + 1 < source.size() && source[index + 1] == '/') {
-            while (index < source.size() && source[index] != '\n') {
-                ++index;
-            }
-            continue;
-        }
-
-        if (current == '"') {
-            inString = true;
-            continue;
-        }
-
-        if (current == '{') {
-            ++braceDepth;
-        } else if (current == '}') {
-            --braceDepth;
-        }
-
-        if (!std::isspace(static_cast<unsigned char>(current))) {
-            lastMeaningful = current;
-        }
-    }
-
-    if (inString || braceDepth > 0) {
-        return false;
-    }
-
-    return lastMeaningful == ';' || lastMeaningful == '}';
 }
 
 constexpr int ctrlKey(int value) {
@@ -5143,105 +6688,13 @@ std::string joinEditorLines(const std::vector<std::string>& lines) {
     return buffer.str();
 }
 
-bool tryReadTextFile(const std::string& path, std::string* text) {
-    std::ifstream stream(path.c_str(), std::ios::in | std::ios::binary);
-    if (!stream) {
-        return false;
-    }
-
+std::string readAllStdin() {
     std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    if (!stream.good() && !stream.eof()) {
-        throw std::runtime_error("File Error: failed while reading '" + path + "'");
+    buffer << std::cin.rdbuf();
+    if (!std::cin.good() && !std::cin.eof()) {
+        throw std::runtime_error("Input Error: failed while reading stdin");
     }
-
-    *text = buffer.str();
-    return true;
-}
-
-void writeTextFile(const std::string& path, const std::string& text) {
-    std::ofstream stream(path.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
-    if (!stream) {
-        throw std::runtime_error("File Error: could not open '" + path + "' for writing");
-    }
-
-    stream << text;
-    if (!stream.good()) {
-        throw std::runtime_error("File Error: failed while writing '" + path + "'");
-    }
-}
-
-bool writeTextToCommand(const char* command, const std::string& text) {
-    FILE* pipe = popen(command, "w");
-    if (pipe == nullptr) {
-        return false;
-    }
-
-    size_t written = 0;
-    while (written < text.size()) {
-        const size_t chunk = std::fwrite(text.data() + written, 1, text.size() - written, pipe);
-        if (chunk == 0) {
-            break;
-        }
-        written += chunk;
-    }
-
-    const int status = pclose(pipe);
-    return written == text.size() && status == 0;
-}
-
-bool readTextFromCommand(const char* command, std::string* text) {
-    FILE* pipe = popen(command, "r");
-    if (pipe == nullptr) {
-        return false;
-    }
-
-    std::string output;
-    char buffer[4096];
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-
-    const bool readFailed = std::ferror(pipe) != 0;
-    const int status = pclose(pipe);
-    if (readFailed || status != 0) {
-        return false;
-    }
-
-    *text = output;
-    return true;
-}
-
-bool writeSystemClipboard(const std::string& text) {
-    static const char* const commands[] = {
-        "pbcopy 2>/dev/null",
-        "wl-copy 2>/dev/null",
-        "xclip -selection clipboard 2>/dev/null",
-        "xsel --clipboard --input 2>/dev/null"
-    };
-
-    for (size_t index = 0; index < sizeof(commands) / sizeof(commands[0]); ++index) {
-        if (writeTextToCommand(commands[index], text)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool readSystemClipboard(std::string* text) {
-    static const char* const commands[] = {
-        "pbpaste 2>/dev/null",
-        "wl-paste --no-newline 2>/dev/null",
-        "xclip -selection clipboard -o 2>/dev/null",
-        "xsel --clipboard --output 2>/dev/null"
-    };
-
-    for (size_t index = 0; index < sizeof(commands) / sizeof(commands[0]); ++index) {
-        if (readTextFromCommand(commands[index], text)) {
-            return true;
-        }
-    }
-    return false;
+    return buffer.str();
 }
 
 int digitWidth(size_t value) {
@@ -5266,9 +6719,6 @@ public:
           outputRows_(4),
           cursorX_(0),
           cursorY_(0),
-          selectionActive_(false),
-          selectionAnchorX_(0),
-          selectionAnchorY_(0),
           preferredColumn_(0),
           rowOffset_(0),
           colOffset_(0),
@@ -5277,11 +6727,7 @@ public:
           promptActive_(false),
           promptLabel_(),
           promptBuffer_(),
-          pendingPasteText_(),
-          currentPath_(),
           dirty_(false),
-          localClipboard_(),
-          hasLocalClipboard_(false),
           outputStoredBytes_(0),
           outputTruncated_(false),
           lines_(1, ""),
@@ -5300,7 +6746,7 @@ public:
     int run() {
         enableRawMode();
         updateWindowSize();
-        setStatusMessage("Ctrl-R run | Ctrl-C copy | Ctrl-X cut | Ctrl-V paste | Ctrl-Q quit");
+        setStatusMessage("Ctrl-R run | Ctrl-Q quit");
 
         while (!quitRequested_) {
             refreshScreen();
@@ -5315,14 +6761,9 @@ private:
         ARROW_RIGHT,
         ARROW_UP,
         ARROW_DOWN,
-        SHIFT_ARROW_LEFT,
-        SHIFT_ARROW_RIGHT,
-        SHIFT_ARROW_UP,
-        SHIFT_ARROW_DOWN,
         DEL_KEY,
         HOME_KEY,
-        END_KEY,
-        PASTE_EVENT
+        END_KEY
     };
 
     enum HighlightType {
@@ -5336,11 +6777,6 @@ private:
         HL_OPERATOR,
         HL_PLACEHOLDER,
         HL_ERROR
-    };
-
-    struct CursorPosition {
-        int x;
-        int y;
     };
 
     size_t rowIndex(int row) const {
@@ -5369,7 +6805,7 @@ private:
 
     void enableRawMode() {
         if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-            throw std::runtime_error("Terminal IDE requires an interactive TTY. Use '--repl' or '--run <file>' instead.");
+            throw std::runtime_error("Terminal IDE requires an interactive TTY. Use '--stdin' instead.");
         }
 
         if (tcgetattr(STDIN_FILENO, &originalTermios_) == -1) {
@@ -5389,8 +6825,7 @@ private:
         }
 
         rawModeEnabled_ = true;
-        // Enable alternate screen, hide cursor, and bracketed paste.
-        std::cout << "\x1b[?1049h\x1b[H\x1b[?25l\x1b[?2004h";
+        std::cout << "\x1b[?1049h\x1b[H\x1b[?25l";
         std::cout.flush();
     }
 
@@ -5399,7 +6834,7 @@ private:
             return;
         }
 
-        std::cout << "\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l";
+        std::cout << "\x1b[0m\x1b[?25h\x1b[?1049l";
         std::cout.flush();
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios_);
         rawModeEnabled_ = false;
@@ -5465,7 +6900,6 @@ private:
     }
 
     int readKey() {
-        pendingPasteText_.clear();
         while (true) {
             char ch = '\0';
             const ssize_t bytesRead = ::read(STDIN_FILENO, &ch, 1);
@@ -5510,41 +6944,14 @@ private:
             return '\x1b';
         }
 
-        if (prefix == '[' && sequence == "200~") {
-            pendingPasteText_ = readBracketedPaste();
-            return PASTE_EVENT;
-        }
-
-        if (prefix == '[' && sequence == "M") {
-            char trash[3];
-            ::read(STDIN_FILENO, &trash, 3);
-        }
-
-        // Ignore all terminal escape/control sequences (including mouse and arrow-like sequences).
+        if (sequence == "A") return ARROW_UP;
+        if (sequence == "B") return ARROW_DOWN;
+        if (sequence == "C") return ARROW_RIGHT;
+        if (sequence == "D") return ARROW_LEFT;
+        if (sequence == "H" || sequence == "1~" || sequence == "7~") return HOME_KEY;
+        if (sequence == "F" || sequence == "4~" || sequence == "8~") return END_KEY;
+        if (sequence == "3~") return DEL_KEY;
         return '\x1b';
-    }
-
-    std::string readBracketedPaste() {
-        static const std::string terminator = "\x1b[201~";
-        std::string pasted;
-
-        while (true) {
-            char ch = '\0';
-            const ssize_t bytesRead = ::read(STDIN_FILENO, &ch, 1);
-            if (bytesRead == 1) {
-                pasted.push_back(ch);
-                if (pasted.size() >= terminator.size() &&
-                    pasted.compare(pasted.size() - terminator.size(), terminator.size(), terminator) == 0) {
-                    pasted.erase(pasted.size() - terminator.size());
-                    return pasted;
-                }
-                continue;
-            }
-            if (bytesRead == -1 && errno == EAGAIN) {
-                continue;
-            }
-            return pasted;
-        }
     }
 
     void refreshScreen() {
@@ -5634,20 +7041,17 @@ private:
             buffer << numberBuffer << "\x1b[0m";
 
             int activeColor = HL_NORMAL;
-            bool activeSelected = false;
             const int start = std::min(static_cast<int>(line.size()), colOffset_);
             const int end = std::min(static_cast<int>(line.size()), colOffset_ + textWidth);
             for (int index = start; index < end; ++index) {
                 const int nextColor = highlights[static_cast<size_t>(index)];
-                const bool selected = isSelected(fileRow, index);
-                if (nextColor != activeColor || selected != activeSelected) {
-                    buffer << styleCode(nextColor, selected);
+                if (nextColor != activeColor) {
+                    buffer << colorCode(nextColor);
                     activeColor = nextColor;
-                    activeSelected = selected;
                 }
                 buffer << line[static_cast<size_t>(index)];
             }
-            if (activeColor != HL_NORMAL || activeSelected) {
+            if (activeColor != HL_NORMAL) {
                 buffer << "\x1b[0m";
             }
             buffer << "\x1b[K\r\n";
@@ -5673,7 +7077,7 @@ private:
             const bool showMessage = !statusMessage_.empty() && std::time(nullptr) - statusMessageTime_ < 6;
             left += showMessage
                         ? " | " + statusMessage_
-                        : " | Ctrl-R run | Ctrl-C copy | Ctrl-X cut | Ctrl-V paste | Ctrl-Q quit";
+                        : " | Ctrl-R run | Ctrl-Q quit";
         }
         std::string right = "Ln " + std::to_string(cursorY_ + 1) + ", Col " + std::to_string(cursorX_ + 1);
         if (static_cast<int>(left.size() + right.size()) > screenCols_) {
@@ -5757,24 +7161,13 @@ private:
             case ctrlKey('r'):
                 runBuffer();
                 return;
-            case ctrlKey('c'):
-                copySelectionOrLine();
-                return;
-            case ctrlKey('x'):
-                cutSelectionOrLine();
-                return;
-            case ctrlKey('v'):
-                pasteClipboard();
-                return;
             case ctrlKey('a'):
             case HOME_KEY:
-                clearSelection();
                 cursorX_ = 0;
                 preferredColumn_ = cursorX_;
                 return;
             case ctrlKey('e'):
             case END_KEY:
-                clearSelection();
                 cursorX_ = static_cast<int>(currentLine().size());
                 preferredColumn_ = cursorX_;
                 return;
@@ -5784,13 +7177,7 @@ private:
             case ARROW_DOWN:
             case ARROW_LEFT:
             case ARROW_RIGHT:
-                moveCursor(key, false);
-                return;
-            case SHIFT_ARROW_UP:
-            case SHIFT_ARROW_DOWN:
-            case SHIFT_ARROW_LEFT:
-            case SHIFT_ARROW_RIGHT:
-                moveCursor(key, true);
+                moveCursor(key);
                 return;
             case ctrlKey('d'):
             case DEL_KEY:
@@ -5807,9 +7194,6 @@ private:
             case '\t':
                 insertText("    ");
                 return;
-            case PASTE_EVENT:
-                pasteText(pendingPasteText_, "Pasted.");
-                return;
             case '\x1b':
                 return;
             default:
@@ -5821,31 +7205,9 @@ private:
         }
     }
 
-    void moveCursor(int key, bool extendSelection) {
-        if (extendSelection) {
-            beginSelection();
-        } else if (hasSelection()) {
-            switch (key) {
-                case ARROW_LEFT:
-                case ARROW_UP:
-                case ctrlKey('p'):
-                    setCursorPosition(selectionStart());
-                    return;
-                case ARROW_RIGHT:
-                case ARROW_DOWN:
-                case ctrlKey('n'):
-                    setCursorPosition(selectionEnd());
-                    return;
-                default:
-                    break;
-            }
-        } else {
-            clearSelection();
-        }
-
+    void moveCursor(int key) {
         switch (key) {
             case ARROW_LEFT:
-            case SHIFT_ARROW_LEFT:
                 if (cursorX_ > 0) {
                     --cursorX_;
                 } else if (cursorY_ > 0) {
@@ -5855,7 +7217,6 @@ private:
                 preferredColumn_ = cursorX_;
                 break;
             case ARROW_RIGHT:
-            case SHIFT_ARROW_RIGHT:
                 if (cursorX_ < static_cast<int>(currentLine().size())) {
                     ++cursorX_;
                 } else if (cursorY_ + 1 < static_cast<int>(lines_.size())) {
@@ -5865,12 +7226,10 @@ private:
                 preferredColumn_ = cursorX_;
                 break;
             case ARROW_UP:
-            case SHIFT_ARROW_UP:
             case ctrlKey('p'):
                 moveVertical(-1);
                 break;
             case ARROW_DOWN:
-            case SHIFT_ARROW_DOWN:
             case ctrlKey('n'):
                 moveVertical(1);
                 break;
@@ -5878,9 +7237,6 @@ private:
                 break;
         }
         clampCursorX();
-        if (!extendSelection || !hasSelection()) {
-            clearSelection();
-        }
     }
 
     void moveVertical(int delta) {
@@ -5904,23 +7260,16 @@ private:
     }
 
     void insertChar(char ch) {
-        if (hasSelection()) {
-            deleteSelection();
-        }
         currentLine().insert(static_cast<size_t>(cursorX_), 1, ch);
         ++cursorX_;
         preferredColumn_ = cursorX_;
         markDirty();
-        clearSelection();
     }
 
     void insertText(const std::string& text) {
         const std::string normalized = normalizeEditorText(text);
         if (normalized.empty()) {
             return;
-        }
-        if (hasSelection()) {
-            deleteSelection();
         }
 
         const std::vector<std::string> pastedLines = splitEditorLines(normalized);
@@ -5933,7 +7282,6 @@ private:
             cursorX_ = static_cast<int>(head.size() + pastedLines[0].size());
             preferredColumn_ = cursorX_;
             markDirty();
-            clearSelection();
             return;
         }
 
@@ -5948,42 +7296,9 @@ private:
         cursorX_ = static_cast<int>(pastedLines.back().size());
         preferredColumn_ = cursorX_;
         markDirty();
-        clearSelection();
-    }
-
-    bool readClipboardText(std::string* text) const {
-        if (readSystemClipboard(text)) {
-            return true;
-        }
-        if (!hasLocalClipboard_) {
-            return false;
-        }
-        *text = localClipboard_;
-        return true;
-    }
-
-    void pasteClipboard() {
-        std::string text;
-        if (!readClipboardText(&text)) {
-            setStatusMessage("Clipboard is empty.");
-            return;
-        }
-        pasteText(text, "Pasted clipboard.");
-    }
-
-    void pasteText(const std::string& text, const std::string& successMessage) {
-        if (text.empty()) {
-            setStatusMessage("Clipboard is empty.");
-            return;
-        }
-        insertText(text);
-        setStatusMessage(successMessage);
     }
 
     void insertNewline() {
-        if (hasSelection()) {
-            deleteSelection();
-        }
         const std::string tail = currentLine().substr(static_cast<size_t>(cursorX_));
         currentLine().erase(static_cast<size_t>(cursorX_));
         lines_.insert(lines_.begin() + static_cast<std::vector<std::string>::difference_type>(cursorY_ + 1), tail);
@@ -5991,14 +7306,9 @@ private:
         cursorX_ = 0;
         preferredColumn_ = cursorX_;
         markDirty();
-        clearSelection();
     }
 
     void deleteChar() {
-        if (hasSelection()) {
-            deleteSelection();
-            return;
-        }
         if (cursorX_ == 0 && cursorY_ == 0) {
             return;
         }
@@ -6013,14 +7323,9 @@ private:
         }
         preferredColumn_ = cursorX_;
         markDirty();
-        clearSelection();
     }
 
     void deleteForwardChar() {
-        if (hasSelection()) {
-            deleteSelection();
-            return;
-        }
         if (cursorX_ < static_cast<int>(currentLine().size())) {
             currentLine().erase(static_cast<size_t>(cursorX_), 1);
             preferredColumn_ = cursorX_;
@@ -6034,7 +7339,6 @@ private:
         lines_.erase(lines_.begin() + static_cast<std::vector<std::string>::difference_type>(cursorY_ + 1));
         preferredColumn_ = cursorX_;
         markDirty();
-        clearSelection();
     }
 
     bool prompt(const std::string& label, std::string* value) {
@@ -6067,46 +7371,10 @@ private:
                 }
                 continue;
             }
-            if (key == ctrlKey('v')) {
-                std::string text;
-                if (readClipboardText(&text)) {
-                    promptBuffer_ += firstPromptLine(text);
-                } else {
-                    setStatusMessage("Clipboard is empty.");
-                }
-                continue;
-            }
-            if (key == PASTE_EVENT) {
-                promptBuffer_ += firstPromptLine(pendingPasteText_);
-                continue;
-            }
             if (key >= 32 && key <= 126) {
                 promptBuffer_.push_back(static_cast<char>(key));
             }
         }
-    }
-
-
-
-    std::string firstPromptLine(const std::string& text) const {
-        std::string line;
-        for (size_t index = 0; index < text.size(); ++index) {
-            const char current = text[index];
-            if (current == '\r') {
-                continue;
-            }
-            if (current == '\n') {
-                break;
-            }
-            if (current == '\t') {
-                line.append("    ");
-                continue;
-            }
-            if (static_cast<unsigned char>(current) >= 32) {
-                line.push_back(current);
-            }
-        }
-        return line;
     }
 
     void runBuffer() {
@@ -6139,7 +7407,7 @@ private:
                     }
                     return ok;
                 });
-            interpreter.executeProgram(program);
+            executeCompiledProgram(program, &interpreter);
             if (outputLines_.empty() && outputPartialLine_.empty()) {
                 appendOutput("[program finished with no output]\n");
             }
@@ -6301,7 +7569,7 @@ private:
             "break", "continue", "defer", "when", "match", "case", "pipe", "true", "false", "nil"
         };
         static const char* builtins[] = {
-            "range", "str", "int", "bool", "type_of", "input", "read_file",
+            "range", "str", "int", "bool", "type_of", "input",
             "Ok", "Err", "is_ok", "is_err", "unwrap",
             "bind", "chain", "branch", "guard",
             "emit", "print", "show", "into", "store", "drop",
@@ -6330,196 +7598,6 @@ private:
             }
         }
         return HL_NORMAL;
-    }
-
-    CursorPosition cursorPosition() const {
-        return CursorPosition{cursorX_, cursorY_};
-    }
-
-    CursorPosition selectionAnchor() const {
-        return CursorPosition{selectionAnchorX_, selectionAnchorY_};
-    }
-
-    bool isBefore(const CursorPosition& left, const CursorPosition& right) const {
-        return left.y < right.y || (left.y == right.y && left.x < right.x);
-    }
-
-    bool hasSelection() const {
-        return selectionActive_ && (selectionAnchorX_ != cursorX_ || selectionAnchorY_ != cursorY_);
-    }
-
-    CursorPosition selectionStart() const {
-        const CursorPosition anchor = selectionAnchor();
-        const CursorPosition cursor = cursorPosition();
-        return isBefore(cursor, anchor) ? cursor : anchor;
-    }
-
-    CursorPosition selectionEnd() const {
-        const CursorPosition anchor = selectionAnchor();
-        const CursorPosition cursor = cursorPosition();
-        return isBefore(cursor, anchor) ? anchor : cursor;
-    }
-
-    void beginSelection() {
-        if (!selectionActive_) {
-            selectionActive_ = true;
-            selectionAnchorX_ = cursorX_;
-            selectionAnchorY_ = cursorY_;
-        }
-    }
-
-    void clearSelection() {
-        selectionActive_ = false;
-        selectionAnchorX_ = cursorX_;
-        selectionAnchorY_ = cursorY_;
-    }
-
-    void setCursorPosition(const CursorPosition& position) {
-        cursorX_ = position.x;
-        cursorY_ = position.y;
-        preferredColumn_ = cursorX_;
-        clearSelection();
-    }
-
-    bool isSelected(int row, int column) const {
-        if (!hasSelection()) {
-            return false;
-        }
-
-        const CursorPosition start = selectionStart();
-        const CursorPosition end = selectionEnd();
-        if (row < start.y || row > end.y) {
-            return false;
-        }
-        if (start.y == end.y) {
-            return column >= start.x && column < end.x;
-        }
-        if (row == start.y) {
-            return column >= start.x;
-        }
-        if (row == end.y) {
-            return column < end.x;
-        }
-        return true;
-    }
-
-    std::string selectedText() const {
-        if (!hasSelection()) {
-            return "";
-        }
-
-        const CursorPosition start = selectionStart();
-        const CursorPosition end = selectionEnd();
-        if (start.y == end.y) {
-            return lineAt(start.y).substr(static_cast<size_t>(start.x), static_cast<size_t>(end.x - start.x));
-        }
-
-        std::ostringstream buffer;
-        buffer << lineAt(start.y).substr(static_cast<size_t>(start.x)) << '\n';
-        for (int row = start.y + 1; row < end.y; ++row) {
-            buffer << lineAt(row) << '\n';
-        }
-        buffer << lineAt(end.y).substr(0, static_cast<size_t>(end.x));
-        return buffer.str();
-    }
-
-    void deleteSelection() {
-        if (!hasSelection()) {
-            return;
-        }
-
-        const CursorPosition start = selectionStart();
-        const CursorPosition end = selectionEnd();
-        if (start.y == end.y) {
-            lineAt(start.y).erase(static_cast<size_t>(start.x), static_cast<size_t>(end.x - start.x));
-        } else {
-            lineAt(start.y) = lineAt(start.y).substr(0, static_cast<size_t>(start.x)) +
-                              lineAt(end.y).substr(static_cast<size_t>(end.x));
-            lines_.erase(lines_.begin() + static_cast<std::vector<std::string>::difference_type>(start.y + 1),
-                         lines_.begin() + static_cast<std::vector<std::string>::difference_type>(end.y + 1));
-        }
-
-        cursorX_ = start.x;
-        cursorY_ = start.y;
-        preferredColumn_ = cursorX_;
-        if (lines_.empty()) {
-            lines_.push_back("");
-        }
-        markDirty();
-        clearSelection();
-    }
-
-    std::string currentLineClipboardText() const {
-        if (lines_.size() == 1 && lines_[0].empty()) {
-            return "";
-        }
-        return currentLine();
-    }
-
-    void deleteCurrentLine() {
-        if (lines_.size() == 1) {
-            lines_[0].clear();
-            cursorX_ = 0;
-            preferredColumn_ = cursorX_;
-            markDirty();
-            clearSelection();
-            return;
-        }
-
-        lines_.erase(lines_.begin() + static_cast<std::vector<std::string>::difference_type>(cursorY_));
-        if (cursorY_ >= static_cast<int>(lines_.size())) {
-            cursorY_ = static_cast<int>(lines_.size()) - 1;
-        }
-        cursorX_ = 0;
-        preferredColumn_ = cursorX_;
-        markDirty();
-        clearSelection();
-    }
-
-    void copySelectionOrLine() {
-        const bool copiedSelection = hasSelection();
-        const std::string text = copiedSelection ? selectedText() : currentLineClipboardText();
-        if (text.empty()) {
-            setStatusMessage("Nothing to copy.");
-            return;
-        }
-
-        localClipboard_ = text;
-        hasLocalClipboard_ = true;
-        if (writeSystemClipboard(text)) {
-            setStatusMessage(copiedSelection ? "Copied selection." : "Copied current line.");
-        } else {
-            setStatusMessage(copiedSelection ? "Copied selection to local clipboard."
-                                             : "Copied current line to local clipboard.");
-        }
-    }
-
-    void cutSelectionOrLine() {
-        const bool cutSelection = hasSelection();
-        const std::string text = cutSelection ? selectedText() : currentLineClipboardText();
-        if (text.empty()) {
-            setStatusMessage("Nothing to cut.");
-            return;
-        }
-
-        localClipboard_ = text;
-        hasLocalClipboard_ = true;
-        const bool systemClipboard = writeSystemClipboard(text);
-        if (cutSelection) {
-            deleteSelection();
-        } else {
-            deleteCurrentLine();
-        }
-        setStatusMessage(cutSelection
-                             ? (systemClipboard ? "Cut selection." : "Cut selection to local clipboard.")
-                             : (systemClipboard ? "Cut current line." : "Cut current line to local clipboard."));
-    }
-
-    const char* styleCode(int highlight, bool selected) const {
-        if (selected) {
-            return "\x1b[7m";
-        }
-        return colorCode(highlight);
     }
 
     const char* colorCode(int highlight) const {
@@ -6562,9 +7640,6 @@ private:
     int outputRows_;
     int cursorX_;
     int cursorY_;
-    bool selectionActive_;
-    int selectionAnchorX_;
-    int selectionAnchorY_;
     int preferredColumn_;
     int rowOffset_;
     int colOffset_;
@@ -6573,11 +7648,7 @@ private:
     bool promptActive_;
     std::string promptLabel_;
     std::string promptBuffer_;
-    std::string pendingPasteText_;
-    std::string currentPath_;
     bool dirty_;
-    std::string localClipboard_;
-    bool hasLocalClipboard_;
     size_t outputStoredBytes_;
     bool outputTruncated_;
     std::vector<std::string> lines_;
@@ -6589,66 +7660,17 @@ private:
     bool forceFullRefresh_;
 };
 
-/**
- * @brief 运行交互式 Aethe REPL。
- */
-void runRepl() {
-    aethe::Interpreter interpreter;
-    std::vector<std::vector<std::unique_ptr<aethe::Statement> > > historyPrograms;
-    std::string buffer;
-    std::string line;
-
-    std::cout << "Aethe 2\n";
-    std::cout << "详细语法参见https://github.com/QianCream/Aethe/blob/main/REFERENCE.md\n";
-
-    while (true) {
-        std::cout << (buffer.empty() ? ">>> " : "...> ");
-        if (!std::getline(std::cin, line)) {
-            break;
-        }
-
-        if (buffer.empty() && (line == "exit" || line == "quit")) {
-            break;
-        }
-
-        if (line == "run") {
-            if (isOnlyWhitespace(buffer)) {
-                continue;
-            }
-
-            if (!isCompleteChunk(buffer)) {
-                std::cerr << "Input Error: incomplete chunk, keep entering code or close the block before 'run'\n";
-                continue;
-            }
-
-            try {
-                std::vector<std::unique_ptr<aethe::Statement> > program = parseProgram(buffer);
-                historyPrograms.push_back(std::move(program));
-                interpreter.executeProgram(historyPrograms.back());
-            } catch (const std::exception& error) {
-                std::cerr << error.what() << '\n';
-            }
-
-            buffer.clear();
-            continue;
-        }
-
-        if (!buffer.empty()) {
-            buffer.push_back('\n');
-        }
-        buffer += line;
-
-        if (isOnlyWhitespace(buffer)) {
-            buffer.clear();
-        }
-    }
-}
-
-int runSourceOnce(const std::string& source) {
+int runSourceOnce(const std::string& source, bool mentionStdinRequirement = false) {
     try {
+        if (isOnlyWhitespace(source)) {
+            std::cerr << (mentionStdinRequirement
+                              ? "Input Error: no source provided on stdin; positional arguments are ignored in sandbox mode\n"
+                              : "Input Error: no source provided\n");
+            return 1;
+        }
         std::vector<std::unique_ptr<aethe::Statement> > program = parseProgram(source);
         aethe::Interpreter interpreter;
-        interpreter.executeProgram(program);
+        executeCompiledProgram(program, &interpreter);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
@@ -6656,14 +7678,35 @@ int runSourceOnce(const std::string& source) {
     }
 }
 
-int runFileOnce(const std::string& path) {
+int runStdinOnce(bool mentionStdinRequirement = false) {
     try {
-        std::string source;
-        if (!tryReadTextFile(path, &source)) {
-            std::cerr << "File Error: could not open '" << path << "'\n";
+        return runSourceOnce(readAllStdin(), mentionStdinRequirement);
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
+int dumpSourceBytecode(const std::string& source) {
+    try {
+        if (isOnlyWhitespace(source)) {
+            std::cerr << "Input Error: no source provided\n";
             return 1;
         }
-        return runSourceOnce(source);
+        std::vector<std::unique_ptr<aethe::Statement> > program = parseProgram(source);
+        aethe::BytecodeCompiler compiler;
+        const aethe::CompiledProgram compiled = compiler.compileProgram(program);
+        std::cout << aethe::disassembleCompiledProgram(compiled);
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
+int dumpStdinBytecode() {
+    try {
+        return dumpSourceBytecode(readAllStdin());
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
@@ -6672,10 +7715,9 @@ int runFileOnce(const std::string& path) {
 
 void printUsage(const char* executable) {
     std::cout << "Usage:\n";
-    std::cout << "  " << executable << "            Launch the terminal editor\n";
-    std::cout << "  " << executable << " anything   Ignore extra args and launch the terminal editor\n";
-    std::cout << "  " << executable << " --repl     Launch the legacy REPL\n";
-    std::cout << "  " << executable << " --run <file.ae>  Run a file once without the IDE\n";
+    std::cout << "  " << executable << "                  Launch the terminal editor\n";
+    std::cout << "  " << executable << " --stdin          Compile and run source from stdin\n";
+    std::cout << "  " << executable << " --dump-bytecode  Compile stdin and print custom bytecode\n";
 }
 
 }
@@ -6683,29 +7725,57 @@ void printUsage(const char* executable) {
 int main(int argc, char** argv) {
     try {
         std::setlocale(LC_CTYPE, "");
-        if (argc >= 2) {
-            const std::string firstArg = argv[1];
-            if (firstArg == "--repl") {
-                runRepl();
-                return 0;
-            }
-            if (firstArg == "--run") {
-                if (argc < 3) {
-                    std::cerr << "Usage Error: '--run' expects a file path\n";
-                    return 1;
-                }
-                return runFileOnce(argv[2]);
-            }
-            if (firstArg == "--help" || firstArg == "-h") {
+        enum CliMode {
+            CLI_MODE_DEFAULT = 0,
+            CLI_MODE_STDIN,
+            CLI_MODE_DUMP_BYTECODE
+        };
+
+        CliMode mode = CLI_MODE_DEFAULT;
+        bool sawPositionalArgument = false;
+        for (int index = 1; index < argc; ++index) {
+            const std::string argument = argv[index];
+            if (argument == "--help" || argument == "-h") {
                 printUsage(argv[0]);
                 return 0;
             }
+            if (argument == "--stdin") {
+                if (mode == CLI_MODE_DUMP_BYTECODE) {
+                    std::cerr << "Usage Error: '--stdin' cannot be combined with '--dump-bytecode'\n";
+                    return 1;
+                }
+                mode = CLI_MODE_STDIN;
+                continue;
+            }
+            if (argument == "--dump-bytecode") {
+                if (mode == CLI_MODE_STDIN) {
+                    std::cerr << "Usage Error: '--dump-bytecode' cannot be combined with '--stdin'\n";
+                    return 1;
+                }
+                mode = CLI_MODE_DUMP_BYTECODE;
+                continue;
+            }
+            if (!argument.empty() && argument[0] == '-') {
+                std::cerr << "Usage Error: unknown option '" << argument << "'\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+            sawPositionalArgument = true;
         }
 
-        if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-            std::cerr << "[Aethe] Non-interactive terminal detected, falling back to REPL mode.\n";
-            runRepl();
-            return 0;
+        if (mode == CLI_MODE_STDIN) {
+            return runStdinOnce(sawPositionalArgument);
+        }
+        if (mode == CLI_MODE_DUMP_BYTECODE) {
+            return dumpStdinBytecode();
+        }
+
+        if (!isatty(STDIN_FILENO)) {
+            return runStdinOnce(sawPositionalArgument);
+        }
+        if (!isatty(STDOUT_FILENO)) {
+            std::cerr << "Usage Error: terminal IDE requires a TTY on stdout. Pipe source through stdin instead.\n";
+            return 1;
         }
 
         TerminalIde ide;
