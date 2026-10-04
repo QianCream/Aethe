@@ -9,8 +9,11 @@
 #include <cstdio>
 #include <cwchar>
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <new>
+#include <utility>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -57,6 +60,7 @@ public:
 
         std::vector<Token> tokenize() {
         std::vector<Token> tokens;
+        tokens.reserve(source_.size() / 4 + 8);
 
         while (!isAtEnd()) {
             skipWhitespace();
@@ -287,8 +291,13 @@ public:
     explicit Value(const std::shared_ptr<ObjectData>& value);
     explicit Value(const std::shared_ptr<CallableData>& value);
     explicit Value(const std::shared_ptr<StreamData>& value);
+    Value(const Value& other);
+    Value(Value&& other);
+    Value& operator=(const Value& other);
+    Value& operator=(Value&& other);
+    ~Value();
 
-        bool isTruthy() const {
+    bool isTruthy() const {
         switch (type) {
             case INT:
                 return intValue != 0;
@@ -313,7 +322,7 @@ public:
         }
     }
 
-        std::string typeName() const {
+    std::string typeName() const {
         switch (type) {
             case INT:
                 return "int";
@@ -342,109 +351,316 @@ public:
         }
     }
 
-        std::string toString() const;
-        bool equals(const Value& other) const;
-        const std::vector<Value>& asArray() const;
-        std::vector<Value>& mutableArray();
-        const std::unordered_map<std::string, Value>& asDict() const;
-        std::unordered_map<std::string, Value>& mutableDict();
+    std::string toString() const;
+    bool equals(const Value& other) const;
+    const std::vector<Value>& asArray() const;
+    std::vector<Value>& mutableArray();
+    const std::unordered_map<std::string, Value>& asDict() const;
+    std::unordered_map<std::string, Value>& mutableDict();
 
     Type type;
-    int intValue;
-    bool boolValue;
-    std::string stringValue;
-    std::shared_ptr<std::vector<Value> > arrayValue;
-    std::shared_ptr<std::unordered_map<std::string, Value> > dictValue;
-    std::shared_ptr<ObjectData> objectValue;
-    std::shared_ptr<CallableData> callableValue;
-    std::shared_ptr<StreamData> streamValue;
-    std::shared_ptr<Value> resultValue;
+
+    union {
+        int intValue;
+        bool boolValue;
+        std::string stringValue;
+        std::shared_ptr<std::vector<Value> > arrayValue;
+        std::shared_ptr<std::unordered_map<std::string, Value> > dictValue;
+        std::shared_ptr<ObjectData> objectValue;
+        std::shared_ptr<CallableData> callableValue;
+        std::shared_ptr<StreamData> streamValue;
+        std::shared_ptr<Value> resultValue;
+    };
 
     static Value Ok(const Value& val) {
         Value v;
         v.type = RESULT_OK;
-        v.resultValue = std::make_shared<Value>(val);
+        new (&v.resultValue) std::shared_ptr<Value>(std::make_shared<Value>(val));
         return v;
     }
 
     static Value Err(const Value& val) {
         Value v;
         v.type = RESULT_ERR;
-        v.resultValue = std::make_shared<Value>(val);
+        new (&v.resultValue) std::shared_ptr<Value>(std::make_shared<Value>(val));
         return v;
     }
+
+private:
+    void destroy();
+    void copyFrom(const Value& other);
+    void moveFrom(Value& other);
 };
 
 Value::Value()
-    : type(NIL), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(), resultValue() {
+    : type(NIL), intValue(0) {
 }
 
 Value::Value(int value)
-    : type(INT), intValue(value), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(), resultValue() {
+    : type(INT), intValue(value) {
 }
 
 Value::Value(bool value)
-    : type(BOOL), intValue(0), boolValue(value), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(), resultValue() {
+    : type(BOOL), boolValue(value) {
 }
 
 Value::Value(const std::string& value)
-    : type(STRING), intValue(0), boolValue(false), stringValue(value), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(), resultValue() {
+    : type(STRING), stringValue(value) {
 }
 
 Value::Value(const char* value)
-    : type(STRING), intValue(0), boolValue(false), stringValue(value == nullptr ? "" : value), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(), resultValue() {
+    : type(STRING), stringValue(value == nullptr ? "" : value) {
 }
 
 Value::Value(const std::vector<Value>& value)
-    : type(ARRAY),
-      intValue(0),
-      boolValue(false),
-      stringValue(),
-      arrayValue(new std::vector<Value>(value)),
-      dictValue(),
-      objectValue(),
-      callableValue(),
-      streamValue(),
-      resultValue() {
+    : type(ARRAY), arrayValue(new std::vector<Value>(value)) {
 }
 
 Value::Value(const std::unordered_map<std::string, Value>& value)
-    : type(DICT),
-      intValue(0),
-      boolValue(false),
-      stringValue(),
-      arrayValue(),
-      dictValue(new std::unordered_map<std::string, Value>(value)),
-      objectValue(),
-      callableValue(),
-      streamValue(),
-      resultValue() {
+    : type(DICT), dictValue(new std::unordered_map<std::string, Value>(value)) {
 }
 
 Value::Value(const std::shared_ptr<ObjectData>& value)
-    : type(OBJECT), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(value), callableValue(), streamValue(), resultValue() {
+    : type(OBJECT), objectValue(value) {
+}
+
+Value::Value(const std::shared_ptr<CallableData>& value)
+    : type(CALLABLE), callableValue(value) {
+}
+
+Value::Value(const std::shared_ptr<StreamData>& value)
+    : type(STREAM), streamValue(value) {
+}
+
+Value::Value(const Value& other)
+    : type(NIL), intValue(0) {
+    copyFrom(other);
+}
+
+Value::Value(Value&& other)
+    : type(NIL), intValue(0) {
+    moveFrom(other);
+}
+
+Value& Value::operator=(const Value& other) {
+    if (this == &other) {
+        return *this;
+    }
+    if (type == other.type) {
+        // Same payload kind: assign in place so string buffers and shared
+        // pointers are reused instead of being destroyed and reallocated.
+        switch (type) {
+            case INT:
+                intValue = other.intValue;
+                return *this;
+            case BOOL:
+                boolValue = other.boolValue;
+                return *this;
+            case STRING:
+                stringValue = other.stringValue;
+                return *this;
+            case ARRAY:
+                arrayValue = other.arrayValue;
+                return *this;
+            case DICT:
+                dictValue = other.dictValue;
+                return *this;
+            case OBJECT:
+                objectValue = other.objectValue;
+                return *this;
+            case CALLABLE:
+                callableValue = other.callableValue;
+                return *this;
+            case STREAM:
+                streamValue = other.streamValue;
+                return *this;
+            case RESULT_OK:
+            case RESULT_ERR:
+                resultValue = other.resultValue;
+                return *this;
+            default:
+                return *this;
+        }
+    }
+    destroy();
+    copyFrom(other);
+    return *this;
+}
+
+Value& Value::operator=(Value&& other) {
+    if (this == &other) {
+        return *this;
+    }
+    if (type == other.type) {
+        switch (type) {
+            case INT:
+                intValue = other.intValue;
+                return *this;
+            case BOOL:
+                boolValue = other.boolValue;
+                return *this;
+            case STRING:
+                stringValue = std::move(other.stringValue);
+                return *this;
+            case ARRAY:
+                arrayValue = std::move(other.arrayValue);
+                return *this;
+            case DICT:
+                dictValue = std::move(other.dictValue);
+                return *this;
+            case OBJECT:
+                objectValue = std::move(other.objectValue);
+                return *this;
+            case CALLABLE:
+                callableValue = std::move(other.callableValue);
+                return *this;
+            case STREAM:
+                streamValue = std::move(other.streamValue);
+                return *this;
+            case RESULT_OK:
+            case RESULT_ERR:
+                resultValue = std::move(other.resultValue);
+                return *this;
+            default:
+                return *this;
+        }
+    }
+    destroy();
+    moveFrom(other);
+    return *this;
+}
+
+Value::~Value() {
+    destroy();
+}
+
+void Value::destroy() {
+    switch (type) {
+        case STRING:
+            stringValue.~basic_string();
+            break;
+        case ARRAY:
+            arrayValue.~shared_ptr();
+            break;
+        case DICT:
+            dictValue.~shared_ptr();
+            break;
+        case OBJECT:
+            objectValue.~shared_ptr();
+            break;
+        case CALLABLE:
+            callableValue.~shared_ptr();
+            break;
+        case STREAM:
+            streamValue.~shared_ptr();
+            break;
+        case RESULT_OK:
+        case RESULT_ERR:
+            resultValue.~shared_ptr();
+            break;
+        default:
+            break;
+    }
+    type = NIL;
+}
+
+void Value::copyFrom(const Value& other) {
+    type = other.type;
+    switch (type) {
+        case INT:
+            intValue = other.intValue;
+            break;
+        case BOOL:
+            boolValue = other.boolValue;
+            break;
+        case STRING:
+            new (&stringValue) std::string(other.stringValue);
+            break;
+        case ARRAY:
+            new (&arrayValue) std::shared_ptr<std::vector<Value> >(other.arrayValue);
+            break;
+        case DICT:
+            new (&dictValue) std::shared_ptr<std::unordered_map<std::string, Value> >(other.dictValue);
+            break;
+        case OBJECT:
+            new (&objectValue) std::shared_ptr<ObjectData>(other.objectValue);
+            break;
+        case CALLABLE:
+            new (&callableValue) std::shared_ptr<CallableData>(other.callableValue);
+            break;
+        case STREAM:
+            new (&streamValue) std::shared_ptr<StreamData>(other.streamValue);
+            break;
+        case RESULT_OK:
+        case RESULT_ERR:
+            new (&resultValue) std::shared_ptr<Value>(other.resultValue);
+            break;
+        default:
+            break;
+    }
+}
+
+void Value::moveFrom(Value& other) {
+    type = other.type;
+    switch (type) {
+        case INT:
+            intValue = other.intValue;
+            break;
+        case BOOL:
+            boolValue = other.boolValue;
+            break;
+        case STRING:
+            new (&stringValue) std::string(std::move(other.stringValue));
+            break;
+        case ARRAY:
+            new (&arrayValue) std::shared_ptr<std::vector<Value> >(std::move(other.arrayValue));
+            break;
+        case DICT:
+            new (&dictValue) std::shared_ptr<std::unordered_map<std::string, Value> >(std::move(other.dictValue));
+            break;
+        case OBJECT:
+            new (&objectValue) std::shared_ptr<ObjectData>(std::move(other.objectValue));
+            break;
+        case CALLABLE:
+            new (&callableValue) std::shared_ptr<CallableData>(std::move(other.callableValue));
+            break;
+        case STREAM:
+            new (&streamValue) std::shared_ptr<StreamData>(std::move(other.streamValue));
+            break;
+        case RESULT_OK:
+        case RESULT_ERR:
+            new (&resultValue) std::shared_ptr<Value>(std::move(other.resultValue));
+            break;
+        default:
+            break;
+    }
+    other.destroy();
 }
 
 const std::vector<Value>& Value::asArray() const {
     static const std::vector<Value> empty;
-    return arrayValue.get() == nullptr ? empty : *arrayValue;
+    return type == ARRAY && arrayValue.get() != nullptr ? *arrayValue : empty;
 }
 
 std::vector<Value>& Value::mutableArray() {
-    if (arrayValue.get() == nullptr) {
-        arrayValue.reset(new std::vector<Value>());
+    if (type != ARRAY || arrayValue.get() == nullptr) {
+        destroy();
+        type = ARRAY;
+        new (&arrayValue) std::shared_ptr<std::vector<Value> >(new std::vector<Value>());
     }
     return *arrayValue;
 }
 
 const std::unordered_map<std::string, Value>& Value::asDict() const {
     static const std::unordered_map<std::string, Value> empty;
-    return dictValue.get() == nullptr ? empty : *dictValue;
+    return type == DICT && dictValue.get() != nullptr ? *dictValue : empty;
 }
 
 std::unordered_map<std::string, Value>& Value::mutableDict() {
-    if (dictValue.get() == nullptr) {
-        dictValue.reset(new std::unordered_map<std::string, Value>());
+    if (type != DICT || dictValue.get() == nullptr) {
+        destroy();
+        type = DICT;
+        new (&dictValue) std::shared_ptr<std::unordered_map<std::string, Value> >(new std::unordered_map<std::string, Value>());
     }
     return *dictValue;
 }
@@ -470,16 +686,15 @@ std::string Value::toString() const {
             return "nil";
         case ARRAY: {
             const std::vector<Value>& values = asArray();
-            std::ostringstream stream;
-            stream << "[";
+            std::string result = "[";
             for (size_t index = 0; index < values.size(); ++index) {
-                stream << values[index].toString();
+                result += values[index].toString();
                 if (index + 1 < values.size()) {
-                    stream << ", ";
+                    result += ", ";
                 }
             }
-            stream << "]";
-            return stream.str();
+            result += "]";
+            return result;
         }
         case DICT: {
             const std::unordered_map<std::string, Value>& entries = asDict();
@@ -490,17 +705,19 @@ std::string Value::toString() const {
             }
             std::sort(keys.begin(), keys.end());
 
-            std::ostringstream stream;
-            stream << "{";
+            std::string result = "{";
             for (size_t index = 0; index < keys.size(); ++index) {
                 const std::string& key = keys[index];
-                stream << '"' << key << "\": " << entries.find(key)->second.toString();
+                result += '"';
+                result += key;
+                result += "\": ";
+                result += entries.find(key)->second.toString();
                 if (index + 1 < keys.size()) {
-                    stream << ", ";
+                    result += ", ";
                 }
             }
-            stream << "}";
-            return stream.str();
+            result += "}";
+            return result;
         }
         case OBJECT: {
             if (objectValue.get() == nullptr) {
@@ -514,17 +731,18 @@ std::string Value::toString() const {
             }
             std::sort(keys.begin(), keys.end());
 
-            std::ostringstream stream;
-            stream << objectValue->typeName << "{";
+            std::string result = objectValue->typeName + "{";
             for (size_t index = 0; index < keys.size(); ++index) {
                 const std::string& key = keys[index];
-                stream << key << ": " << objectValue->fields.find(key)->second.toString();
+                result += key;
+                result += ": ";
+                result += objectValue->fields.find(key)->second.toString();
                 if (index + 1 < keys.size()) {
-                    stream << ", ";
+                    result += ", ";
                 }
             }
-            stream << "}";
-            return stream.str();
+            result += "}";
+            return result;
         }
         case CALLABLE:
             return callableValue.get() == nullptr ? "<pipe nil>" : "<pipe>";
@@ -866,18 +1084,10 @@ private:
                                    const Value& input);
 };
 
-Value::Value(const std::shared_ptr<CallableData>& value)
-    : type(CALLABLE), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(value), streamValue(), resultValue() {
-}
-
-Value::Value(const std::shared_ptr<StreamData>& value)
-    : type(STREAM), intValue(0), boolValue(false), stringValue(), arrayValue(), dictValue(), objectValue(), callableValue(), streamValue(value), resultValue() {
-}
-
 class Parser {
 public:
-        explicit Parser(const std::vector<Token>& tokens)
-        : tokens_(tokens), position_(0) {
+        explicit Parser(std::vector<Token> tokens)
+        : tokens_(std::move(tokens)), position_(0) {
     }
 
         std::vector<std::unique_ptr<Statement> > parseProgram() {
@@ -1400,7 +1610,7 @@ private:
         throw std::runtime_error("Syntax Error(line " + std::to_string(peek().line) + "): " + message);
     }
 
-    const std::vector<Token>& tokens_;
+    std::vector<Token> tokens_;
     size_t position_;
 };
 
@@ -1499,6 +1709,59 @@ SharedThreadPool& sharedThreadPool() {
 }
 #endif
 
+enum BinaryOpCode {
+    BOP_ADD = 0,
+    BOP_SUB,
+    BOP_MUL,
+    BOP_DIV,
+    BOP_MOD,
+    BOP_EQ,
+    BOP_NE,
+    BOP_GT,
+    BOP_GTE,
+    BOP_LT,
+    BOP_LTE
+};
+
+inline int binaryOpCodeOfName(const std::string& op) {
+    switch (op.size()) {
+        case 1:
+            if (op[0] == '+') return BOP_ADD;
+            if (op[0] == '-') return BOP_SUB;
+            if (op[0] == '*') return BOP_MUL;
+            if (op[0] == '/') return BOP_DIV;
+            if (op[0] == '%') return BOP_MOD;
+            if (op[0] == '>') return BOP_GT;
+            if (op[0] == '<') return BOP_LT;
+            return -1;
+        case 2:
+            if (op == "==") return BOP_EQ;
+            if (op == "!=") return BOP_NE;
+            if (op == ">=") return BOP_GTE;
+            if (op == "<=") return BOP_LTE;
+            return -1;
+        default:
+            return -1;
+    }
+}
+
+inline const char* binaryOpName(int code) {
+    switch (code) {
+        case BOP_ADD: return "+";
+        case BOP_SUB: return "-";
+        case BOP_MUL: return "*";
+        case BOP_DIV: return "/";
+        case BOP_MOD: return "%";
+        case BOP_EQ: return "==";
+        case BOP_NE: return "!=";
+        case BOP_GT: return ">";
+        case BOP_GTE: return ">=";
+        case BOP_LT: return "<";
+        case BOP_LTE: return "<=";
+        default: return "?";
+    }
+}
+
 class Interpreter {
 public:
     typedef std::function<void(const std::string&)> OutputHandler;
@@ -1520,22 +1783,6 @@ public:
           inputHandler_(inputHandler ? inputHandler : consoleInput) {
     }
 
-        void executeProgram(const std::vector<std::unique_ptr<Statement> >& program) {
-        for (size_t index = 0; index < program.size(); ++index) {
-            registerTopLevelDefinition(*program[index]);
-        }
-
-        for (size_t index = 0; index < program.size(); ++index) {
-            if (program[index]->type == Statement::FLOW_DEF ||
-                program[index]->type == Statement::STAGE_DEF ||
-                program[index]->type == Statement::TYPE_DEF) {
-                continue;
-            }
-            executeStatement(*program[index]);
-        }
-    }
-
-private:
     struct ScopeFrame {
         ScopeFrame()
             : vars(), defers() {
@@ -1563,1896 +1810,6 @@ private:
             }
             types_[statement.name] = info;
         }
-    }
-
-    Value executeStatement(const Statement& statement) {
-        switch (statement.type) {
-            case Statement::EXPR:
-                return evalExpr(statement.expr.get());
-            case Statement::FLOW_DEF:
-                flows_[statement.name] = &statement;
-                return Value();
-            case Statement::STAGE_DEF:
-                stages_[statement.name] = &statement;
-                return Value();
-            case Statement::TYPE_DEF: {
-                TypeInfo info;
-                info.fields = statement.params;
-                for (size_t index = 0; index < statement.methods.size(); ++index) {
-                    info.methods[statement.methods[index]->name] = statement.methods[index].get();
-                }
-                types_[statement.name] = info;
-                return Value();
-            }
-            case Statement::WHEN:
-                if (evalExpr(statement.expr.get()).isTruthy()) {
-                    return executeScopedBlock(statement.body);
-                }
-                return executeScopedBlock(statement.elseBody);
-            case Statement::MATCH:
-                return executeMatch(statement);
-            case Statement::WHILE_LOOP: {
-                Value last;
-                while (evalExpr(statement.expr.get()).isTruthy()) {
-                    ++loopDepth_;
-                    try {
-                        last = executeScopedBlock(statement.body);
-                    } catch (const ContinueSignal&) {
-                    } catch (const BreakSignal&) {
-                        --loopDepth_;
-                        break;
-                    }
-                    --loopDepth_;
-                }
-                return last;
-            }
-            case Statement::FOR_LOOP:
-                return executeForLoop(statement);
-            case Statement::RETURN:
-                if (callDepth_ == 0) {
-                    runtimeError("give can only be used inside flow, stream/stage, or method bodies");
-                }
-                throw ReturnSignal(statement.expr.get() == nullptr ? Value() : evalExpr(statement.expr.get()));
-            case Statement::DEFER:
-                currentScope().defers.push_back(&statement);
-                return Value();
-            case Statement::BREAK_LOOP:
-                if (loopDepth_ == 0) {
-                    runtimeError("break can only be used inside while or for");
-                }
-                throw BreakSignal();
-            case Statement::CONTINUE_LOOP:
-                if (loopDepth_ == 0) {
-                    runtimeError("continue can only be used inside while or for");
-                }
-                throw ContinueSignal();
-            default:
-                runtimeError("unknown statement");
-        }
-    }
-
-    Value executeScopedBlock(const std::vector<std::unique_ptr<Statement> >& body) {
-        pushScope();
-        try {
-            Value result = executeStatements(body);
-            popScope();
-            return result;
-        } catch (...) {
-            popScope();
-            throw;
-        }
-    }
-
-    Value executeMatch(const Statement& statement) {
-        const Value target = evalExpr(statement.expr.get());
-        for (size_t index = 0; index < statement.arms.size(); ++index) {
-            const Expr* pattern = statement.arms[index].get();
-            const bool wildcard = dynamic_cast<const PlaceholderExpr*>(pattern) != nullptr;
-
-            if (const CallExpr* callPattern = dynamic_cast<const CallExpr*>(pattern)) {
-                if (const IdentifierExpr* id = dynamic_cast<const IdentifierExpr*>(callPattern->callee.get())) {
-                    if ((id->name == "Ok" && target.type == Value::RESULT_OK) ||
-                        (id->name == "Err" && target.type == Value::RESULT_ERR)) {
-                        if (matchGuardPasses(target, statement.armGuards[index].get())) {
-                            Value inner = target.resultValue ? *target.resultValue : Value();
-                            if (callPattern->args.size() == 1) {
-                                if (const IdentifierExpr* binding = dynamic_cast<const IdentifierExpr*>(callPattern->args[0].get())) {
-                                    pushScope();
-                                    currentScope().vars["it"] = inner;
-                                    currentScope().vars[binding->name] = inner;
-                                    try {
-                                        Value result = executeStatements(statement.armBodies[index]);
-                                        popScope();
-                                        return result;
-                                    } catch (...) {
-                                        popScope();
-                                        throw;
-                                    }
-                                }
-                            }
-                            return executeMatchBlock(inner, statement.armBodies[index]);
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            if (!wildcard && !target.equals(evalExpr(pattern))) {
-                continue;
-            }
-            if (matchGuardPasses(target, statement.armGuards[index].get())) {
-                return executeMatchBlock(target, statement.armBodies[index]);
-            }
-        }
-        return executeMatchBlock(target, statement.elseBody);
-    }
-
-    Value executeStatements(const std::vector<std::unique_ptr<Statement> >& body) {
-        Value last;
-        for (size_t index = 0; index < body.size(); ++index) {
-            last = executeStatement(*body[index]);
-        }
-        return last;
-    }
-
-    Value executeForLoop(const Statement& statement) {
-        Value iterable = evalExpr(statement.expr.get());
-        Value last;
-        const bool hasSecondBinding = !statement.params.empty();
-
-        if (iterable.type == Value::ARRAY) {
-            const std::vector<Value>& items = iterable.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                ++loopDepth_;
-                try {
-                    last = hasSecondBinding
-                               ? executeLoopIteration(statement.name,
-                                                    Value(static_cast<int>(index)),
-                                                    &statement.params.front(),
-                                                    &items[index],
-                                                    statement.body)
-                               : executeLoopIteration(statement.name, items[index], nullptr, nullptr, statement.body);
-                } catch (const ContinueSignal&) {
-                } catch (const BreakSignal&) {
-                    --loopDepth_;
-                    break;
-                }
-                --loopDepth_;
-            }
-            return last;
-        }
-
-        if (iterable.type == Value::STRING) {
-            for (size_t index = 0; index < iterable.stringValue.size(); ++index) {
-                const Value character(std::string(1, iterable.stringValue[index]));
-                ++loopDepth_;
-                try {
-                    last = hasSecondBinding
-                               ? executeLoopIteration(statement.name,
-                                                    Value(static_cast<int>(index)),
-                                                    &statement.params.front(),
-                                                    &character,
-                                                    statement.body)
-                               : executeLoopIteration(statement.name, character, nullptr, nullptr, statement.body);
-                } catch (const ContinueSignal&) {
-                } catch (const BreakSignal&) {
-                    --loopDepth_;
-                    break;
-                }
-                --loopDepth_;
-            }
-            return last;
-        }
-
-        if (iterable.type == Value::DICT) {
-            std::vector<std::string> keys;
-            const std::unordered_map<std::string, Value>& entries = iterable.asDict();
-            for (std::unordered_map<std::string, Value>::const_iterator it = entries.begin(); it != entries.end(); ++it) {
-                keys.push_back(it->first);
-            }
-            std::sort(keys.begin(), keys.end());
-
-            for (size_t index = 0; index < keys.size(); ++index) {
-                std::unordered_map<std::string, Value> pairValue;
-                pairValue["key"] = Value(keys[index]);
-                pairValue["value"] = entries.find(keys[index])->second;
-                const Value keyValue(keys[index]);
-                const Value currentValue = entries.find(keys[index])->second;
-                ++loopDepth_;
-                try {
-                    last = hasSecondBinding
-                               ? executeLoopIteration(statement.name,
-                                                    keyValue,
-                                                    &statement.params.front(),
-                                                    &currentValue,
-                                                    statement.body)
-                               : executeLoopIteration(statement.name, Value(pairValue), nullptr, nullptr, statement.body);
-                } catch (const ContinueSignal&) {
-                } catch (const BreakSignal&) {
-                    --loopDepth_;
-                    break;
-                }
-                --loopDepth_;
-            }
-            return last;
-        }
-
-        if (iterable.type == Value::OBJECT && iterable.objectValue.get() != nullptr) {
-            std::vector<std::string> keys;
-            for (std::unordered_map<std::string, Value>::const_iterator it = iterable.objectValue->fields.begin();
-                 it != iterable.objectValue->fields.end();
-                 ++it) {
-                keys.push_back(it->first);
-            }
-            std::sort(keys.begin(), keys.end());
-
-            for (size_t index = 0; index < keys.size(); ++index) {
-                std::unordered_map<std::string, Value> pairValue;
-                pairValue["key"] = Value(keys[index]);
-                pairValue["value"] = iterable.objectValue->fields.find(keys[index])->second;
-                const Value keyValue(keys[index]);
-                const Value currentValue = iterable.objectValue->fields.find(keys[index])->second;
-                ++loopDepth_;
-                try {
-                    last = hasSecondBinding
-                               ? executeLoopIteration(statement.name,
-                                                    keyValue,
-                                                    &statement.params.front(),
-                                                    &currentValue,
-                                                    statement.body)
-                               : executeLoopIteration(statement.name, Value(pairValue), nullptr, nullptr, statement.body);
-                } catch (const ContinueSignal&) {
-                } catch (const BreakSignal&) {
-                    --loopDepth_;
-                    break;
-                }
-                --loopDepth_;
-            }
-            return last;
-        }
-
-        if (isStreamValue(iterable)) {
-            StreamCursorState cursor = makeStreamCursor(iterable, "for");
-            Value item;
-            size_t index = 0;
-            while (cursor.next(this, &item, "for")) {
-                ++loopDepth_;
-                try {
-                    if (hasSecondBinding) {
-                        last = executeLoopIteration(statement.name,
-                                                    Value(static_cast<int>(index)),
-                                                    &statement.params.front(),
-                                                    &item,
-                                                    statement.body);
-                    } else {
-                        last = executeLoopIteration(statement.name, item, nullptr, nullptr, statement.body);
-                    }
-                } catch (const ContinueSignal&) {
-                } catch (const BreakSignal&) {
-                    --loopDepth_;
-                    break;
-                }
-                --loopDepth_;
-                ++index;
-            }
-            return last;
-        }
-
-        runtimeError("for expects an array, string, dict, object, or stream iterable");
-    }
-
-    Value executeLoopIteration(const std::string& name,
-                               const Value& value,
-                               const std::string* secondName,
-                               const Value* secondValue,
-                               const std::vector<std::unique_ptr<Statement> >& body) {
-        pushScope();
-        currentScope().vars[name] = value;
-        if (secondName != nullptr && secondValue != nullptr) {
-            currentScope().vars[*secondName] = *secondValue;
-        }
-        try {
-            Value result = executeStatements(body);
-            popScope();
-            return result;
-        } catch (...) {
-            popScope();
-            throw;
-        }
-    }
-
-    bool matchGuardPasses(const Value& target, const Expr* guard) {
-        if (guard == nullptr) {
-            return true;
-        }
-        pushScope();
-        currentScope().vars["it"] = target;
-        try {
-            const bool result = evalExpr(guard).isTruthy();
-            popScope();
-            return result;
-        } catch (...) {
-            popScope();
-            throw;
-        }
-    }
-
-    Value executeMatchBlock(const Value& target, const std::vector<std::unique_ptr<Statement> >& body) {
-        pushScope();
-        currentScope().vars["it"] = target;
-        try {
-            Value result = executeStatements(body);
-            popScope();
-            return result;
-        } catch (...) {
-            popScope();
-            throw;
-        }
-    }
-
-    Value evalExpr(const Expr* expr) {
-        return evalExpr(expr, nullptr);
-    }
-
-    Value evalExpr(const Expr* expr, const Value* pipeInput) {
-        if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(expr)) {
-            return literal->value;
-        }
-
-        if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr)) {
-            return getVariable(variable->name);
-        }
-
-        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(expr)) {
-            return Value(identifier->name);
-        }
-
-        if (dynamic_cast<const PlaceholderExpr*>(expr) != nullptr) {
-            if (pipeInput == nullptr) {
-                runtimeError("placeholder '_' is a pipeline value slot, not an anonymous function; it can only be used on the right side of a pipeline");
-            }
-            return *pipeInput;
-        }
-
-        if (const ArrayExpr* array = dynamic_cast<const ArrayExpr*>(expr)) {
-            std::vector<Value> elements;
-            elements.reserve(array->elements.size());
-            for (size_t index = 0; index < array->elements.size(); ++index) {
-                elements.push_back(evalExpr(array->elements[index].get(), pipeInput));
-            }
-            return Value(elements);
-        }
-
-        if (const DictExpr* dict = dynamic_cast<const DictExpr*>(expr)) {
-            std::unordered_map<std::string, Value> entries;
-            for (size_t index = 0; index < dict->entries.size(); ++index) {
-                entries[dict->entries[index].first] = evalExpr(dict->entries[index].second.get(), pipeInput);
-            }
-            return Value(entries);
-        }
-
-        if (const PipeExpr* pipe = dynamic_cast<const PipeExpr*>(expr)) {
-            return Value(std::shared_ptr<CallableData>(new CallableData(pipe->params, &pipe->body, captureVisibleVars())));
-        }
-
-        if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-            return evalUnary(*unary, pipeInput);
-        }
-
-        if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-            return evalBinary(*binary, pipeInput);
-        }
-
-        if (const AssignExpr* assign = dynamic_cast<const AssignExpr*>(expr)) {
-            return evalAssign(*assign, pipeInput);
-        }
-
-        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
-            return evalMember(*member, pipeInput);
-        }
-
-        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
-            return evalIndex(*index, pipeInput);
-        }
-
-        if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
-            return evalCall(*call, pipeInput);
-        }
-
-        if (const PipelineExpr* pipeline = dynamic_cast<const PipelineExpr*>(expr)) {
-            return evalPipeline(*pipeline);
-        }
-
-        runtimeError("unknown expression");
-    }
-
-    bool containsPlaceholder(const Expr* expr) const {
-        if (dynamic_cast<const PlaceholderExpr*>(expr) != nullptr) {
-            return true;
-        }
-        if (const ArrayExpr* array = dynamic_cast<const ArrayExpr*>(expr)) {
-            for (size_t index = 0; index < array->elements.size(); ++index) {
-                if (containsPlaceholder(array->elements[index].get())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (const DictExpr* dict = dynamic_cast<const DictExpr*>(expr)) {
-            for (size_t index = 0; index < dict->entries.size(); ++index) {
-                if (containsPlaceholder(dict->entries[index].second.get())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-            return containsPlaceholder(unary->right.get());
-        }
-        if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-            return containsPlaceholder(binary->left.get()) || containsPlaceholder(binary->right.get());
-        }
-        if (const AssignExpr* assign = dynamic_cast<const AssignExpr*>(expr)) {
-            return containsPlaceholder(assign->target.get()) || containsPlaceholder(assign->value.get());
-        }
-        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
-            return containsPlaceholder(member->object.get());
-        }
-        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
-            return containsPlaceholder(index->container.get()) || containsPlaceholder(index->index.get());
-        }
-        if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
-            if (containsPlaceholder(call->callee.get())) {
-                return true;
-            }
-            for (size_t index = 0; index < call->args.size(); ++index) {
-                if (containsPlaceholder(call->args[index].get())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (const PipelineExpr* pipeline = dynamic_cast<const PipelineExpr*>(expr)) {
-            if (containsPlaceholder(pipeline->source.get())) {
-                return true;
-            }
-            for (size_t index = 0; index < pipeline->stages.size(); ++index) {
-                if (containsPlaceholder(pipeline->stages[index].expr.get())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (dynamic_cast<const PipeExpr*>(expr) != nullptr) {
-            return false;
-        }
-        return false;
-    }
-
-    Value evalUnary(const UnaryExpr& unary, const Value* pipeInput) {
-        const Value right = evalExpr(unary.right.get(), pipeInput);
-        if (unary.op == "!") {
-            return Value(!right.isTruthy());
-        }
-        if (unary.op == "-") {
-            return Value(-requireInt(right, "unary '-'"));
-        }
-        runtimeError("unknown unary operator '" + unary.op + "'");
-    }
-
-    Value evalBinary(const BinaryExpr& binary, const Value* pipeInput) {
-        if (binary.op == "&&") {
-            const Value left = evalExpr(binary.left.get(), pipeInput);
-            if (!left.isTruthy()) {
-                return Value(false);
-            }
-            return Value(evalExpr(binary.right.get(), pipeInput).isTruthy());
-        }
-
-        if (binary.op == "||") {
-            const Value left = evalExpr(binary.left.get(), pipeInput);
-            if (left.isTruthy()) {
-                return Value(true);
-            }
-            return Value(evalExpr(binary.right.get(), pipeInput).isTruthy());
-        }
-
-        const Value left = evalExpr(binary.left.get(), pipeInput);
-        const Value right = evalExpr(binary.right.get(), pipeInput);
-        return applyBinaryOperator(left, binary.op, right);
-    }
-
-    Value applyBinaryOperator(const Value& left, const std::string& op, const Value& right) const {
-        if (op == "+") {
-            if (left.type == Value::STRING || right.type == Value::STRING) {
-                return Value(left.toString() + right.toString());
-            }
-            return Value(requireInt(left, op) + requireInt(right, op));
-        }
-
-        if (op == "-") {
-            return Value(requireInt(left, op) - requireInt(right, op));
-        }
-
-        if (op == "*") {
-            return Value(requireInt(left, op) * requireInt(right, op));
-        }
-
-        if (op == "/") {
-            const int divisor = requireInt(right, op);
-            if (divisor == 0) {
-                runtimeError("division by zero");
-            }
-            return Value(requireInt(left, op) / divisor);
-        }
-
-        if (op == "%") {
-            const int divisor = requireInt(right, op);
-            if (divisor == 0) {
-                runtimeError("modulo by zero");
-            }
-            return Value(requireInt(left, op) % divisor);
-        }
-
-        if (op == "==") {
-            return Value(left.equals(right));
-        }
-
-        if (op == "!=") {
-            return Value(!left.equals(right));
-        }
-
-        if (op == ">") {
-            return Value(requireInt(left, op) > requireInt(right, op));
-        }
-
-        if (op == ">=") {
-            return Value(requireInt(left, op) >= requireInt(right, op));
-        }
-
-        if (op == "<") {
-            return Value(requireInt(left, op) < requireInt(right, op));
-        }
-
-        if (op == "<=") {
-            return Value(requireInt(left, op) <= requireInt(right, op));
-        }
-
-        runtimeError("unknown binary operator '" + op + "'");
-    }
-
-    bool isAssignableTarget(const Expr* expr) const {
-        if (dynamic_cast<const VariableExpr*>(expr) != nullptr) {
-            return true;
-        }
-        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(expr)) {
-            return isAssignableTarget(member->object.get());
-        }
-        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
-            return isAssignableTarget(index->container.get());
-        }
-        return false;
-    }
-
-    Value applyAssignmentOperator(const Value& left, const std::string& op, const Value& right) const {
-        if (op == "=") {
-            return right;
-        }
-        if (op == "+=") {
-            if (left.type == Value::STRING || right.type == Value::STRING) {
-                return Value(left.toString() + right.toString());
-            }
-            return Value(requireInt(left, op) + requireInt(right, op));
-        }
-        if (op == "-=") {
-            return Value(requireInt(left, op) - requireInt(right, op));
-        }
-        if (op == "*=") {
-            return Value(requireInt(left, op) * requireInt(right, op));
-        }
-        if (op == "/=") {
-            const int divisor = requireInt(right, op);
-            if (divisor == 0) {
-                runtimeError("division by zero");
-            }
-            return Value(requireInt(left, op) / divisor);
-        }
-        if (op == "%=") {
-            const int divisor = requireInt(right, op);
-            if (divisor == 0) {
-                runtimeError("modulo by zero");
-            }
-            return Value(requireInt(left, op) % divisor);
-        }
-        runtimeError("unknown assignment operator '" + op + "'");
-    }
-
-    void assignTarget(const Expr* target, const Value& value, const Value* pipeInput) {
-        if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(target)) {
-            storeVariable(variable->name, value);
-            return;
-        }
-
-        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(target)) {
-            const Value object = evalExpr(member->object.get(), pipeInput);
-            const Value updated = writeIndexedValue(object, Value(member->memberName), value, "assignment");
-            assignTarget(member->object.get(), updated, pipeInput);
-            return;
-        }
-
-        if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(target)) {
-            const Value container = evalExpr(index->container.get(), pipeInput);
-            const Value key = evalExpr(index->index.get(), pipeInput);
-            const Value updated = writeIndexedValue(container, key, value, "assignment");
-            assignTarget(index->container.get(), updated, pipeInput);
-            return;
-        }
-
-        runtimeError("assignment target must be a variable, member access, or index access");
-    }
-
-    Value evalAssign(const AssignExpr& assign, const Value* pipeInput) {
-        if (!isAssignableTarget(assign.target.get())) {
-            runtimeError("assignment target must be a variable, member access, or index access");
-        }
-
-        const Value right = evalExpr(assign.value.get(), pipeInput);
-        const Value assigned = assign.op == "="
-                                   ? right
-                                   : applyAssignmentOperator(evalExpr(assign.target.get(), pipeInput), assign.op, right);
-        assignTarget(assign.target.get(), assigned, pipeInput);
-        return assigned;
-    }
-
-    Value evalMember(const MemberExpr& member, const Value* pipeInput) {
-        const Value object = evalExpr(member.object.get(), pipeInput);
-        return readMember(object, member.memberName);
-    }
-
-    Value evalIndex(const IndexExpr& index, const Value* pipeInput) {
-        const Value container = evalExpr(index.container.get(), pipeInput);
-        const Value key = evalExpr(index.index.get(), pipeInput);
-        return readIndexedValue(container, key, "index access");
-    }
-
-    Value evalCall(const CallExpr& call, const Value* pipeInput) {
-        std::vector<Value> args = evalArgs(call.args, pipeInput);
-
-        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(call.callee.get())) {
-            return invokeIdentifierCall(identifier->name, args);
-        }
-
-        if (const MemberExpr* member = dynamic_cast<const MemberExpr*>(call.callee.get())) {
-            Value object = evalExpr(member->object.get(), pipeInput);
-            if (object.type == Value::OBJECT && hasMethod(object.objectValue->typeName, member->memberName)) {
-                return invokeMethod(object, member->memberName, args);
-            }
-            return invokeCallableValue(readMember(object, member->memberName), args, "call");
-        }
-
-        return invokeCallableValue(evalExpr(call.callee.get(), pipeInput), args, "call");
-    }
-
-    Value evalPipeline(const PipelineExpr& pipeline) {
-        Value value = evalExpr(pipeline.source.get());
-        for (size_t index = 0; index < pipeline.stages.size(); ++index) {
-            const PipelineExpr::Stage& stage = pipeline.stages[index];
-            if (stage.op == "|?") {
-                if (value.type == Value::RESULT_ERR) {
-                    continue;
-                }
-                if (value.type == Value::RESULT_OK) {
-                    value = *(value.resultValue);
-                }
-                try {
-                    value = evalPipeTarget(stage.expr.get(), value);
-                    if (value.type != Value::RESULT_ERR && value.type != Value::RESULT_OK) {
-                        value = Value::Ok(value);
-                    }
-                } catch (const std::runtime_error& e) {
-                    value = Value::Err(Value(std::string(e.what())));
-                }
-            } else {
-                value = evalPipeTarget(stage.expr.get(), value);
-            }
-        }
-        return value;
-    }
-
-    std::vector<Value> evalArgs(const std::vector<std::unique_ptr<Expr> >& args, const Value* pipeInput = nullptr) {
-        std::vector<Value> values;
-        values.reserve(args.size());
-        for (size_t index = 0; index < args.size(); ++index) {
-            values.push_back(evalExpr(args[index].get(), pipeInput));
-        }
-        return values;
-    }
-
-    Value invokeIdentifierCall(const std::string& name, const std::vector<Value>& args) {
-        if (name == "read_file") {
-            runtimeError("read_file is disabled in sandbox mode");
-        }
-
-        if (name == "Ok") {
-            if (args.size() != 1) runtimeError("Ok expects exactly one argument");
-            return Value::Ok(args[0]);
-        }
-        if (name == "Err") {
-            if (args.size() != 1) runtimeError("Err expects exactly one argument");
-            return Value::Err(args[0]);
-        }
-        if (name == "is_ok") {
-            if (args.size() != 1) runtimeError("is_ok expects exactly one argument");
-            return Value(args[0].type == Value::RESULT_OK);
-        }
-        if (name == "is_err") {
-            if (args.size() != 1) runtimeError("is_err expects exactly one argument");
-            return Value(args[0].type == Value::RESULT_ERR);
-        }
-        if (name == "unwrap") {
-            if (args.size() != 1) runtimeError("unwrap expects exactly one argument");
-            if (args[0].type == Value::RESULT_OK || args[0].type == Value::RESULT_ERR) {
-                return *(args[0].resultValue);
-            }
-            return args[0]; // If not wrapped, just return itself
-        }
-
-        if (name == "range") {
-            if (args.size() == 1) {
-                return makeRange(0, requireInt(args[0], "range"));
-            }
-            if (args.size() == 2) {
-                if (args[1].type == Value::NIL) {
-                    return makeRange(requireInt(args[0], "range"), 0, false, 1);
-                }
-                return makeRange(requireInt(args[0], "range"), requireInt(args[1], "range"));
-            }
-            if (args.size() == 3) {
-                if (args[1].type != Value::NIL) {
-                    runtimeError("range(start, nil, step) requires nil as second argument");
-                }
-                return makeRange(requireInt(args[0], "range"), 0, false, requireInt(args[2], "range"));
-            }
-            runtimeError("range expects (end), (start, end), (start, nil), or (start, nil, step)");
-        }
-
-        if (name == "str") {
-            if (args.size() != 1) {
-                runtimeError("str expects one argument");
-            }
-            return Value(args[0].toString());
-        }
-
-        if (name == "int") {
-            if (args.size() != 1) {
-                runtimeError("int expects one argument");
-            }
-            return Value(toInt(args[0]));
-        }
-
-        if (name == "bool") {
-            if (args.size() != 1) {
-                runtimeError("bool expects one argument");
-            }
-            return Value(args[0].isTruthy());
-        }
-
-        if (name == "type_of") {
-            if (args.size() != 1) {
-                runtimeError("type_of expects one argument");
-            }
-            return Value(args[0].typeName());
-        }
-
-        if (name == "input") {
-            if (args.size() > 1) {
-                runtimeError("input expects zero or one argument");
-            }
-            const std::string prompt = args.empty() ? std::string() : requireString(args[0], "input");
-            std::string line;
-            if (!inputHandler_(prompt, &line)) {
-                return Value();
-            }
-            return Value(line);
-        }
-
-        if (name == "bind") {
-            if (args.empty()) {
-                runtimeError("bind expects a callable and optional bound arguments");
-            }
-            expectCallableValue(args[0], "bind");
-            return makeNativeCallable(CallableData::BOUND, args, "bind");
-        }
-
-        if (name == "chain") {
-            if (args.empty()) {
-                runtimeError("chain expects at least one callable");
-            }
-            for (size_t index = 0; index < args.size(); ++index) {
-                expectCallableValue(args[index], "chain");
-            }
-            return makeNativeCallable(CallableData::CHAIN, args, "chain");
-        }
-
-        if (name == "branch") {
-            if (args.empty()) {
-                runtimeError("branch expects at least one callable");
-            }
-            for (size_t index = 0; index < args.size(); ++index) {
-                expectCallableValue(args[index], "branch");
-            }
-            return makeNativeCallable(CallableData::BRANCH, args, "branch");
-        }
-
-        if (name == "guard") {
-            if (args.size() < 2 || args.size() > 3) {
-                runtimeError("guard expects predicate, true route, and optional false route");
-            }
-            for (size_t index = 0; index < args.size(); ++index) {
-                expectCallableValue(args[index], "guard");
-            }
-            return makeNativeCallable(CallableData::GUARD, args, "guard");
-        }
-
-        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
-            compiledFlows_.find(name);
-        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
-            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, args, nullptr);
-        }
-
-        if (!args.empty()) {
-            std::vector<Value> stageArgs(args.begin() + 1, args.end());
-            return runNamedStage(name, args.front(), stageArgs);
-        }
-
-        runtimeError("unknown callable '" + name + "'");
-    }
-
-    Value evalPipeTarget(const Expr* target, const Value& input) {
-        if (containsPlaceholder(target)) {
-            return evalExpr(target, &input);
-        }
-
-        if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(target)) {
-            return invokePipeCallable(Value(identifier->name), input, std::vector<Value>(), "pipeline target");
-        }
-
-        if (const CallExpr* call = dynamic_cast<const CallExpr*>(target)) {
-            const std::vector<Value> args = evalArgs(call->args);
-            if (const IdentifierExpr* identifier = dynamic_cast<const IdentifierExpr*>(call->callee.get())) {
-                return invokePipeCallable(Value(identifier->name), input, args, "pipeline target");
-            }
-            return invokePipeCallable(evalExpr(call->callee.get()), input, args, "pipeline target");
-        }
-
-        return invokePipeCallable(evalExpr(target), input, std::vector<Value>(), "pipeline target");
-    }
-
-    Value runNamedStage(const std::string& name, const Value& input, const std::vector<Value>& args) {
-
-        if (name == "into" || name == "store") {
-            if (args.size() != 1) {
-                runtimeError("into(name) expects exactly one argument");
-            }
-            storeVariable(requireSymbol(args[0], name), input);
-            return input;
-        }
-
-        if (name == "emit" || name == "print" || name == "show") {
-            if (!args.empty()) {
-                runtimeError("emit expects no arguments");
-            }
-            if (isStreamValue(input)) {
-                outputHandler_(Value(materializeStream(input, name)).toString() + "\n");
-            } else {
-                outputHandler_(input.toString() + "\n");
-            }
-            return input;
-        }
-
-        if (name == "drop") {
-            if (!args.empty()) {
-                runtimeError("drop expects no arguments");
-            }
-            return Value();
-        }
-
-        if (name == "give") {
-            if (!args.empty()) {
-                runtimeError("give stage expects no arguments");
-            }
-            if (callDepth_ == 0) {
-                runtimeError("give stage can only be used inside flow, stream/stage, or method bodies");
-            }
-            throw ReturnSignal(input);
-        }
-
-        if (name == "add") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) + requireInt(args[0], name));
-        }
-
-        if (name == "sub") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) - requireInt(args[0], name));
-        }
-
-        if (name == "mul") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) * requireInt(args[0], name));
-        }
-
-        if (name == "div") {
-            expectArity(args, 1, name);
-            const int divisor = requireInt(args[0], name);
-            if (divisor == 0) {
-                runtimeError("div does not allow zero");
-            }
-            return Value(requireInt(input, name) / divisor);
-        }
-
-        if (name == "mod") {
-            expectArity(args, 1, name);
-            const int divisor = requireInt(args[0], name);
-            if (divisor == 0) {
-                runtimeError("mod does not allow zero");
-            }
-            return Value(requireInt(input, name) % divisor);
-        }
-
-        if (name == "min") {
-            expectArity(args, 1, name);
-            return Value(std::min(requireInt(input, name), requireInt(args[0], name)));
-        }
-
-        if (name == "max") {
-            expectArity(args, 1, name);
-            return Value(std::max(requireInt(input, name), requireInt(args[0], name)));
-        }
-
-        if (name == "eq") {
-            expectArity(args, 1, name);
-            return Value(input.equals(args[0]));
-        }
-
-        if (name == "ne") {
-            expectArity(args, 1, name);
-            return Value(!input.equals(args[0]));
-        }
-
-        if (name == "gt") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) > requireInt(args[0], name));
-        }
-
-        if (name == "gte") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) >= requireInt(args[0], name));
-        }
-
-        if (name == "lt") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) < requireInt(args[0], name));
-        }
-
-        if (name == "lte") {
-            expectArity(args, 1, name);
-            return Value(requireInt(input, name) <= requireInt(args[0], name));
-        }
-
-        if (name == "not") {
-            expectArity(args, 0, name);
-            return Value(!input.isTruthy());
-        }
-
-        if (name == "default") {
-            expectArity(args, 1, name);
-            return input.type == Value::NIL ? args[0] : input;
-        }
-
-        if (name == "choose") {
-            expectArity(args, 2, name);
-            return input.isTruthy() ? args[0] : args[1];
-        }
-
-        if (name == "trim") {
-            expectArity(args, 0, name);
-            return Value(trimCopy(requireString(input, name)));
-        }
-
-        if (name == "upper" || name == "to_upper") {
-            expectArity(args, 0, name);
-            return Value(toUpperCopy(requireString(input, name)));
-        }
-
-        if (name == "lower" || name == "to_lower") {
-            expectArity(args, 0, name);
-            return Value(toLowerCopy(requireString(input, name)));
-        }
-
-        if (name == "substring") {
-            if (args.size() != 2) {
-                runtimeError("substring expects start and length");
-            }
-            const std::string text = requireString(input, name);
-            const int start = requireInt(args[0], name);
-            const int length = requireInt(args[1], name);
-            if (start < 0 || length < 0 || static_cast<size_t>(start) >= text.size()) {
-                return Value("");
-            }
-            return Value(text.substr(static_cast<size_t>(start), static_cast<size_t>(length)));
-        }
-
-        if (name == "concat") {
-            std::string output = input.toString();
-            for (size_t index = 0; index < args.size(); ++index) {
-                output += args[index].toString();
-            }
-            return Value(output);
-        }
-
-        if (name == "split") {
-            expectArity(args, 1, name);
-            return Value(splitString(requireString(input, name), requireString(args[0], name)));
-        }
-
-        if (name == "contains" || name == "has") {
-            expectArity(args, 1, name);
-            return Value(containsValue(materializeStreamValue(input, name), args[0], name));
-        }
-
-        if (name == "starts_with") {
-            expectArity(args, 1, name);
-            return Value(stringsStartsWith(requireString(input, name), requireString(args[0], name)));
-        }
-
-        if (name == "ends_with") {
-            expectArity(args, 1, name);
-            return Value(stringsEndsWith(requireString(input, name), requireString(args[0], name)));
-        }
-
-        if (name == "replace") {
-            expectArity(args, 2, name);
-            const std::string from = requireString(args[0], name);
-            if (from.empty()) {
-                runtimeError("replace does not allow an empty search string");
-            }
-            return Value(replaceAll(requireString(input, name), from, requireString(args[1], name)));
-        }
-
-        if (name == "join") {
-            expectArity(args, 1, name);
-            const Value base = materializeStreamValue(input, name);
-            if (base.type != Value::ARRAY) {
-                runtimeError("join expects an array input");
-            }
-            return Value(joinArray(base.asArray(), requireString(args[0], name)));
-        }
-
-        if (name == "slice") {
-            expectArity(args, 2, name);
-            return sliceValue(materializeStreamValue(input, name), requireInt(args[0], name), requireInt(args[1], name), name);
-        }
-
-        if (name == "reverse") {
-            expectArity(args, 0, name);
-            return reverseValue(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "index_of") {
-            expectArity(args, 1, name);
-            return Value(indexOfValue(materializeStreamValue(input, name), args[0], name));
-        }
-
-        if (name == "repeat") {
-            expectArity(args, 1, name);
-            return repeatValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
-        }
-
-        if (name == "sum") {
-            expectArity(args, 0, name);
-            if (isStreamValue(input)) {
-                int total = 0;
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    total += requireInt(item, name);
-                }
-                return Value(total);
-            }
-            return Value(sumValue(input, name));
-        }
-
-        if (name == "sum_by") {
-            expectArity(args, 1, name);
-            return Value(sumByField(materializeStreamValue(input, name), args[0], name));
-        }
-
-        if (name == "flatten") {
-            expectArity(args, 0, name);
-            return flattenValue(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "take") {
-            expectArity(args, 1, name);
-            if (isStreamValue(input)) {
-                return Value(takeFromStream(input, requireInt(args[0], name), name));
-            }
-            return takeValue(input, requireInt(args[0], name), name);
-        }
-
-        if (name == "skip") {
-            expectArity(args, 1, name);
-            if (isStreamValue(input)) {
-                const int count = requireInt(args[0], name);
-                if (count < 0) {
-                    runtimeError("stage '" + name + "' does not allow negative counts");
-                }
-                StreamData::Operation operation(StreamData::SKIP);
-                operation.count = count;
-                return appendStreamOperation(input, operation, name);
-            }
-            return skipValue(input, requireInt(args[0], name), name);
-        }
-
-        if (name == "distinct") {
-            expectArity(args, 0, name);
-            return distinctValue(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "distinct_by") {
-            expectArity(args, 1, name);
-            return distinctByField(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "sort") {
-            expectArity(args, 0, name);
-            return sortValue(materializeStreamValue(input, name), false, name);
-        }
-
-        if (name == "sort_desc") {
-            expectArity(args, 0, name);
-            return sortValue(materializeStreamValue(input, name), true, name);
-        }
-
-        if (name == "sort_by") {
-            expectArity(args, 1, name);
-            return sortByField(materializeStreamValue(input, name), args[0], false, name);
-        }
-
-        if (name == "sort_desc_by") {
-            expectArity(args, 1, name);
-            return sortByField(materializeStreamValue(input, name), args[0], true, name);
-        }
-
-        if (name == "chunk") {
-            expectArity(args, 1, name);
-            return chunkValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
-        }
-
-        if (name == "bind") {
-            if (args.empty()) {
-                runtimeError("bind expects a callable and optional bound arguments");
-            }
-            expectCallableValue(args[0], name);
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            return bindCallable(input, args[0], extra, name);
-        }
-
-        if (name == "chain") {
-            if (args.empty()) {
-                runtimeError("chain expects at least one callable");
-            }
-            for (size_t index = 0; index < args.size(); ++index) {
-                expectCallableValue(args[index], name);
-            }
-            return chainCallables(input, args, name);
-        }
-
-        if (name == "branch") {
-            if (args.empty()) {
-                runtimeError("branch expects at least one callable");
-            }
-            for (size_t index = 0; index < args.size(); ++index) {
-                expectCallableValue(args[index], name);
-            }
-            return branchCallables(input, args, name);
-        }
-
-        if (name == "guard") {
-            if (args.size() < 2 || args.size() > 3) {
-                runtimeError("guard expects predicate, true route, and optional false route");
-            }
-            expectCallableValue(args[0], name);
-            expectCallableValue(args[1], name);
-            const Value* onFalse = nullptr;
-            if (args.size() == 3) {
-                expectCallableValue(args[2], name);
-                onFalse = &args[2];
-            }
-            return guardCallable(input, args[0], args[1], onFalse, name);
-        }
-
-        if (name == "zip") {
-            expectArity(args, 1, name);
-            return zipValue(materializeStreamValue(input, name), materializeStreamValue(args[0], name), name);
-        }
-
-        if (name == "tap") {
-            if (args.empty()) {
-                runtimeError("tap expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                expectCallableValue(args[0], name);
-                StreamData::Operation operation(StreamData::TAP);
-                operation.callable = args[0];
-                operation.extraArgs = extra;
-                return appendStreamOperation(input, operation, name);
-            }
-            return tapValue(input, args[0], extra, name);
-        }
-
-        if (name == "map") {
-            if (args.empty()) {
-                runtimeError("map expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                expectCallableValue(args[0], name);
-                StreamData::Operation operation(StreamData::MAP);
-                operation.callable = args[0];
-                operation.extraArgs = extra;
-                return appendStreamOperation(input, operation, name);
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("map expects an array input");
-            }
-            std::vector<Value> result;
-            const std::vector<Value>& items = input.asArray();
-            result.reserve(items.size());
-            for (size_t index = 0; index < items.size(); ++index) {
-                result.push_back(invokePipeCallable(args[0], items[index], extra, name));
-            }
-            return Value(result);
-        }
-
-        if (name == "pmap") {
-            if (args.empty()) {
-                runtimeError("pmap expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            return parallelMapValue(input, args[0], extra, name);
-        }
-
-        if (name == "flat_map") {
-            if (args.empty()) {
-                runtimeError("flat_map expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                return flatMapValue(Value(materializeStream(input, name)), args[0], extra, name);
-            }
-            return flatMapValue(input, args[0], extra, name);
-        }
-
-        if (name == "filter") {
-            if (args.empty()) {
-                runtimeError("filter expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                expectCallableValue(args[0], name);
-                StreamData::Operation operation(StreamData::FILTER);
-                operation.callable = args[0];
-                operation.extraArgs = extra;
-                return appendStreamOperation(input, operation, name);
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("filter expects an array input");
-            }
-            std::vector<Value> result;
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
-                    result.push_back(items[index]);
-                }
-            }
-            return Value(result);
-        }
-
-        if (name == "find") {
-            if (args.empty()) {
-                runtimeError("find expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    if (invokePipeCallable(args[0], item, extra, name).isTruthy()) {
-                        return item;
-                    }
-                }
-                return Value();
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("find expects an array input");
-            }
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
-                    return items[index];
-                }
-            }
-            return Value();
-        }
-
-        if (name == "each") {
-            if (args.empty()) {
-                runtimeError("each expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    invokePipeCallable(args[0], item, extra, name);
-                }
-                return input;
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("each expects an array input");
-            }
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                invokePipeCallable(args[0], items[index], extra, name);
-            }
-            return input;
-        }
-
-        if (name == "all") {
-            if (args.empty()) {
-                runtimeError("all expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    if (!invokePipeCallable(args[0], item, extra, name).isTruthy()) {
-                        return Value(false);
-                    }
-                }
-                return Value(true);
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("all expects an array input");
-            }
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                if (!invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
-                    return Value(false);
-                }
-            }
-            return Value(true);
-        }
-
-        if (name == "group_by") {
-            if (args.empty()) {
-                runtimeError("group_by expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            return groupByValue(materializeStreamValue(input, name), args[0], extra, name);
-        }
-
-        if (name == "index_by") {
-            expectArity(args, 1, name);
-            return indexByField(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "count_by") {
-            expectArity(args, 1, name);
-            return countByField(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "pluck") {
-            expectArity(args, 1, name);
-            return pluckValues(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "where") {
-            expectArity(args, 2, name);
-            return whereEntries(materializeStreamValue(input, name), args[0], args[1], name);
-        }
-
-        if (name == "any") {
-            if (args.empty()) {
-                runtimeError("any expects a callable");
-            }
-            std::vector<Value> extra(args.begin() + 1, args.end());
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    if (invokePipeCallable(args[0], item, extra, name).isTruthy()) {
-                        return Value(true);
-                    }
-                }
-                return Value(false);
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("any expects an array input");
-            }
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
-                    return Value(true);
-                }
-            }
-            return Value(false);
-        }
-
-        if (name == "reduce") {
-            if (args.size() < 2) {
-                runtimeError("reduce expects callable and initial value");
-            }
-            if (isStreamValue(input)) {
-                Value acc = args[1];
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, item), name);
-                }
-                return acc;
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("reduce expects an array input");
-            }
-            Value acc = args[1];
-            const std::vector<Value>& items = input.asArray();
-            for (size_t index = 0; index < items.size(); ++index) {
-                acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, items[index]), name);
-            }
-            return acc;
-        }
-
-        if (name == "scan") {
-            if (args.size() < 2) {
-                runtimeError("scan expects callable and initial value");
-            }
-            if (isStreamValue(input)) {
-                Value acc = args[1];
-                std::vector<Value> history;
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, item), name);
-                    history.push_back(acc);
-                }
-                return Value(history);
-            }
-            if (input.type != Value::ARRAY) {
-                runtimeError("scan expects an array input");
-            }
-            Value acc = args[1];
-            std::vector<Value> history;
-            const std::vector<Value>& items = input.asArray();
-            history.reserve(items.size());
-            for (size_t index = 0; index < items.size(); ++index) {
-                acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, items[index]), name);
-                history.push_back(acc);
-            }
-            return Value(history);
-        }
-
-        if (name == "size" || name == "count") {
-            expectArity(args, 0, name);
-            if (isStreamValue(input)) {
-                int total = 0;
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                while (cursor.next(this, &item, name)) {
-                    ++total;
-                }
-                return Value(total);
-            }
-            return Value(containerSize(input, name));
-        }
-
-        if (name == "append" || name == "push") {
-            expectArity(args, 1, name);
-            const Value base = materializeStreamValue(input, name);
-            if (base.type != Value::ARRAY) {
-                runtimeError("append expects an array input");
-            }
-            std::vector<Value> result = base.asArray();
-            result.push_back(args[0]);
-            return Value(result);
-        }
-
-        if (name == "prepend") {
-            expectArity(args, 1, name);
-            const Value base = materializeStreamValue(input, name);
-            if (base.type != Value::ARRAY) {
-                runtimeError("prepend expects an array input");
-            }
-            std::vector<Value> result;
-            const std::vector<Value>& items = base.asArray();
-            result.reserve(items.size() + 1);
-            result.push_back(args[0]);
-            result.insert(result.end(), items.begin(), items.end());
-            return Value(result);
-        }
-
-        if (name == "get" || name == "field" || name == "at") {
-            expectArity(args, 1, name);
-            return readIndexedValue(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "set") {
-            expectArity(args, 2, name);
-            return writeIndexedValue(materializeStreamValue(input, name), args[0], args[1], name);
-        }
-
-        if (name == "update") {
-            if (args.size() < 2) {
-                runtimeError("update expects key/index and callable");
-            }
-            std::vector<Value> extra(args.begin() + 2, args.end());
-            return updateIndexedValue(materializeStreamValue(input, name), args[0], args[1], extra, name);
-        }
-
-        if (name == "insert") {
-            expectArity(args, 2, name);
-            return insertIndexedValue(materializeStreamValue(input, name), requireInt(args[0], name), args[1], name);
-        }
-
-        if (name == "remove") {
-            expectArity(args, 1, name);
-            return removeIndexedValue(materializeStreamValue(input, name), args[0], name);
-        }
-
-        if (name == "keys") {
-            expectArity(args, 0, name);
-            return readKeys(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "values") {
-            expectArity(args, 0, name);
-            return readValues(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "entries") {
-            expectArity(args, 0, name);
-            return readEntries(materializeStreamValue(input, name), name);
-        }
-
-        if (name == "pick") {
-            if (args.empty()) {
-                runtimeError("pick expects at least one key");
-            }
-            return pickEntries(materializeStreamValue(input, name), args, name);
-        }
-
-        if (name == "omit") {
-            if (args.empty()) {
-                runtimeError("omit expects at least one key");
-            }
-            return omitEntries(materializeStreamValue(input, name), args, name);
-        }
-
-        if (name == "merge") {
-            expectArity(args, 1, name);
-            return mergeEntries(materializeStreamValue(input, name), materializeStreamValue(args[0], name), name);
-        }
-
-        if (name == "rename") {
-            expectArity(args, 2, name);
-            return renameEntry(materializeStreamValue(input, name), args[0], args[1], name);
-        }
-
-        if (name == "evolve") {
-            if (args.size() < 2) {
-                runtimeError("evolve expects field name and callable");
-            }
-            std::vector<Value> extra(args.begin() + 2, args.end());
-            return evolveField(materializeStreamValue(input, name), args[0], args[1], extra, name);
-        }
-
-        if (name == "derive") {
-            if (args.size() < 2) {
-                runtimeError("derive expects field name and callable");
-            }
-            std::vector<Value> extra(args.begin() + 2, args.end());
-            return deriveField(materializeStreamValue(input, name), args[0], args[1], extra, name);
-        }
-
-        if (name == "head") {
-            expectArity(args, 0, name);
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                return cursor.next(this, &item, name) ? item : Value();
-            }
-            return readBoundary(input, true, name);
-        }
-
-        if (name == "last") {
-            expectArity(args, 0, name);
-            if (isStreamValue(input)) {
-                StreamCursorState cursor = makeStreamCursor(input, name);
-                Value item;
-                Value last;
-                bool hasAny = false;
-                while (cursor.next(this, &item, name)) {
-                    last = item;
-                    hasAny = true;
-                }
-                return hasAny ? last : Value();
-            }
-            return readBoundary(input, false, name);
-        }
-
-        if (name == "window") {
-            expectArity(args, 1, name);
-            return windowValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
-        }
-
-        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledStageIt =
-            compiledStages_.find(name);
-        if (compiledStageIt != compiledStages_.end() && compiledStageIt->second.get() != nullptr) {
-            return BytecodeVirtualMachine::runStage(this, *compiledStageIt->second, input, args);
-        }
-
-        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
-            compiledFlows_.find(name);
-        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
-            std::vector<Value> flowArgs;
-            flowArgs.reserve(args.size() + 1);
-            flowArgs.push_back(input);
-            flowArgs.insert(flowArgs.end(), args.begin(), args.end());
-            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, flowArgs, nullptr);
-        }
-
-        if (isDirectBuiltinCallableName(name)) {
-            std::vector<Value> callArgs;
-            callArgs.reserve(args.size() + 1);
-            callArgs.push_back(input);
-            callArgs.insert(callArgs.end(), args.begin(), args.end());
-            return invokeIdentifierCall(name, callArgs);
-        }
-
-        runtimeError("unknown stage '" + name + "'");
-    }
-
-    Value invokeCallableValue(const Value& callable, const std::vector<Value>& args, const std::string& context) {
-        if (callable.type == Value::STRING) {
-            return invokeIdentifierCall(callable.stringValue, args);
-        }
-
-        if (callable.type == Value::CALLABLE && callable.callableValue.get() != nullptr) {
-            return invokeAnonymousCallable(*callable.callableValue, args);
-        }
-
-        runtimeError(context + " target must be a callable name or pipe value");
-    }
-
-    Value invokePipeCallable(const Value& callable,
-                             const Value& input,
-                             const std::vector<Value>& args,
-                             const std::string& context) {
-        if (callable.type == Value::STRING) {
-            return runNamedStage(callable.stringValue, input, args);
-        }
-
-        if (callable.type == Value::CALLABLE && callable.callableValue.get() != nullptr) {
-            std::vector<Value> callArgs;
-            callArgs.reserve(args.size() + 1);
-            callArgs.push_back(input);
-            callArgs.insert(callArgs.end(), args.begin(), args.end());
-            return invokeAnonymousCallable(*callable.callableValue, callArgs);
-        }
-
-        runtimeError(context + " expects a callable name or pipe value");
-    }
-
-    Value invokeFlow(const Statement& flow, const std::vector<Value>& args, const Value* self) {
-        if (args.size() != flow.params.size()) {
-            runtimeError("flow '" + flow.name + "' expected " + std::to_string(flow.params.size()) +
-                         " arguments but received " + std::to_string(args.size()));
-        }
-
-        pushScope();
-        ++callDepth_;
-        if (self != nullptr) {
-            currentScope().vars["self"] = *self;
-        }
-        for (size_t index = 0; index < flow.params.size(); ++index) {
-            currentScope().vars[flow.params[index]] = args[index];
-        }
-
-        try {
-            executeStatements(flow.body);
-            --callDepth_;
-            popScope();
-            return Value();
-        } catch (const ReturnSignal& signal) {
-            --callDepth_;
-            popScope();
-            return signal.value;
-        } catch (...) {
-            --callDepth_;
-            popScope();
-            throw;
-        }
-    }
-
-    Value invokeAnonymousCallable(const CallableData& callable, const std::vector<Value>& args) {
-        if (callable.kind != CallableData::PIPE_BODY) {
-            const std::string label = callable.label.empty() ? "pipe" : callable.label;
-            if (args.size() != 1) {
-                runtimeError(label + " pipe expected 1 argument but received " + std::to_string(args.size()));
-            }
-            return runNativeCallable(callable, args[0]);
-        }
-
-        if (callable.compiledBody.get() != nullptr) {
-            if (args.size() != callable.params.size()) {
-                runtimeError("pipe expected " + std::to_string(callable.params.size()) +
-                             " arguments but received " + std::to_string(args.size()));
-            }
-            return BytecodeVirtualMachine::runPipe(this, *callable.compiledBody, callable.captured, args);
-        }
-
-        runtimeError("pipe value has no compiled body");
-    }
-
-    Value runNativeCallable(const CallableData& callable, const Value& input) {
-        switch (callable.kind) {
-            case CallableData::BOUND: {
-                if (callable.parts.empty()) {
-                    runtimeError("bind pipe has no target");
-                }
-                std::vector<Value> extra;
-                if (callable.parts.size() > 1) {
-                    extra.assign(callable.parts.begin() + 1, callable.parts.end());
-                }
-                return bindCallable(input, callable.parts[0], extra, callable.label);
-            }
-            case CallableData::CHAIN:
-                return chainCallables(input, callable.parts, callable.label);
-            case CallableData::BRANCH:
-                return branchCallables(input, callable.parts, callable.label);
-            case CallableData::GUARD: {
-                if (callable.parts.size() < 2 || callable.parts.size() > 3) {
-                    runtimeError("guard pipe has invalid shape");
-                }
-                const Value* onFalse = callable.parts.size() == 3 ? &callable.parts[2] : nullptr;
-                return guardCallable(input, callable.parts[0], callable.parts[1], onFalse, callable.label);
-            }
-            case CallableData::PIPE_BODY:
-                break;
-            default:
-                runtimeError("unknown native pipe kind");
-        }
-
-        runtimeError("unknown native pipe kind");
-    }
-
-    Value invokeStage(const Statement& stage, const Value& input, const std::vector<Value>& args) {
-        if (args.size() != stage.params.size()) {
-            runtimeError("stage '" + stage.name + "' expected " + std::to_string(stage.params.size()) +
-                         " arguments but received " + std::to_string(args.size()));
-        }
-
-        pushScope();
-        ++callDepth_;
-        currentScope().vars["it"] = input;
-        for (size_t index = 0; index < stage.params.size(); ++index) {
-            currentScope().vars[stage.params[index]] = args[index];
-        }
-
-        try {
-            executeStatements(stage.body);
-            --callDepth_;
-            popScope();
-            return input;
-        } catch (const ReturnSignal& signal) {
-            --callDepth_;
-            popScope();
-            return signal.value;
-        } catch (...) {
-            --callDepth_;
-            popScope();
-            throw;
-        }
-    }
-
-    Value invokeMethod(const Value& object, const std::string& name, const std::vector<Value>& args) {
-        if (object.type != Value::OBJECT || object.objectValue.get() == nullptr) {
-            runtimeError("method call requires an object");
-        }
-
-        std::unordered_map<std::string, TypeInfo>::const_iterator typeIt = types_.find(object.objectValue->typeName);
-        if (typeIt == types_.end()) {
-            runtimeError("unknown object type '" + object.objectValue->typeName + "'");
-        }
-
-        std::unordered_map<std::string, const Statement*>::const_iterator methodIt = typeIt->second.methods.find(name);
-        if (methodIt == typeIt->second.methods.end()) {
-            runtimeError("type '" + object.objectValue->typeName + "' has no method '" + name + "'");
-        }
-
-        return invokeFlow(*methodIt->second, args, &object);
-    }
-
-    Value constructObject(const std::string& typeName, const TypeInfo& typeInfo, const std::vector<Value>& args) {
-        if (args.size() != typeInfo.fields.size()) {
-            runtimeError("type '" + typeName + "' expected " + std::to_string(typeInfo.fields.size()) +
-                         " constructor arguments but received " + std::to_string(args.size()));
-        }
-
-        std::shared_ptr<ObjectData> object(new ObjectData(typeName));
-        for (size_t index = 0; index < typeInfo.fields.size(); ++index) {
-            object->fields[typeInfo.fields[index]] = args[index];
-        }
-        return Value(object);
-    }
-
-    bool hasMethod(const std::string& typeName, const std::string& name) const {
-        std::unordered_map<std::string, TypeInfo>::const_iterator typeIt = types_.find(typeName);
-        return typeIt != types_.end() && typeIt->second.methods.find(name) != typeIt->second.methods.end();
-    }
-
-    void pushScope() {
-        scopes_.push_back(ScopeFrame());
-    }
-
-    void popScope() {
-        while (!scopes_.back().defers.empty()) {
-            const Statement* deferred = scopes_.back().defers.back();
-            scopes_.back().defers.pop_back();
-            executeStatements(deferred->body);
-        }
-        scopes_.pop_back();
-    }
-
-    ScopeFrame& currentScope() {
-        return scopes_.back();
-    }
-
-    std::unordered_map<std::string, Value> captureVisibleVars() const {
-        std::unordered_map<std::string, Value> captured;
-        for (size_t index = 0; index < scopes_.size(); ++index) {
-            for (std::unordered_map<std::string, Value>::const_iterator it = scopes_[index].vars.begin();
-                 it != scopes_[index].vars.end();
-                 ++it) {
-                captured[it->first] = it->second;
-            }
-        }
-        return captured;
-    }
-
-    Value getVariable(const std::string& name) const {
-        for (size_t index = scopes_.size(); index > 0; --index) {
-            std::unordered_map<std::string, Value>::const_iterator it = scopes_[index - 1].vars.find(name);
-            if (it != scopes_[index - 1].vars.end()) {
-                return it->second;
-            }
-        }
-        runtimeError("unknown variable $" + name);
-    }
-
-    void storeVariable(const std::string& name, const Value& value) {
-        for (size_t index = scopes_.size(); index > 0; --index) {
-            std::unordered_map<std::string, Value>::iterator it = scopes_[index - 1].vars.find(name);
-            if (it != scopes_[index - 1].vars.end()) {
-                it->second = value;
-                return;
-            }
-        }
-        currentScope().vars[name] = value;
     }
 
     void expectArity(const std::vector<Value>& args, size_t expected, const std::string& name) const {
@@ -3522,9 +1879,6 @@ private:
         runtimeError("cannot convert " + value.typeName() + " to int");
     }
 
-    bool isStreamValue(const Value& value) const {
-        return value.type == Value::STREAM && value.streamValue.get() != nullptr;
-    }
 
     struct StreamCursorState {
         explicit StreamCursorState(const std::shared_ptr<StreamData>& streamData)
@@ -3678,14 +2032,1287 @@ private:
         return isStreamValue(input) ? Value(materializeStream(input, stageName)) : input;
     }
 
+    bool isStreamValue(const Value& value) const {
+        return value.type == Value::STREAM && value.streamValue.get() != nullptr;
+    }
+
+    Value invokeAnonymousCallable(const CallableData& callable, const std::vector<Value>& args) {
+        if (callable.kind != CallableData::PIPE_BODY) {
+            const std::string label = callable.label.empty() ? "pipe" : callable.label;
+            if (args.size() != 1) {
+                runtimeError(label + " pipe expected 1 argument but received " + std::to_string(args.size()));
+            }
+            return runNativeCallable(callable, args[0]);
+        }
+
+        if (callable.compiledBody.get() != nullptr) {
+            if (args.size() != callable.params.size()) {
+                runtimeError("pipe expected " + std::to_string(callable.params.size()) +
+                             " arguments but received " + std::to_string(args.size()));
+            }
+            return BytecodeVirtualMachine::runPipe(this, *callable.compiledBody, callable.captured, args);
+        }
+
+        runtimeError("pipe value has no compiled body");
+    }
+
+    Value runNativeCallable(const CallableData& callable, const Value& input) {
+        switch (callable.kind) {
+            case CallableData::BOUND: {
+                if (callable.parts.empty()) {
+                    runtimeError("bind pipe has no target");
+                }
+                std::vector<Value> extra;
+                if (callable.parts.size() > 1) {
+                    extra.assign(callable.parts.begin() + 1, callable.parts.end());
+                }
+                return bindCallable(input, callable.parts[0], extra, callable.label);
+            }
+            case CallableData::CHAIN:
+                return chainCallables(input, callable.parts, callable.label);
+            case CallableData::BRANCH:
+                return branchCallables(input, callable.parts, callable.label);
+            case CallableData::GUARD: {
+                if (callable.parts.size() < 2 || callable.parts.size() > 3) {
+                    runtimeError("guard pipe has invalid shape");
+                }
+                const Value* onFalse = callable.parts.size() == 3 ? &callable.parts[2] : nullptr;
+                return guardCallable(input, callable.parts[0], callable.parts[1], onFalse, callable.label);
+            }
+            case CallableData::PIPE_BODY:
+                break;
+            default:
+                runtimeError("unknown native pipe kind");
+        }
+
+        runtimeError("unknown native pipe kind");
+    }
+
+
     Value makeNativeCallable(CallableData::Kind kind, const std::vector<Value>& parts, const std::string& label) const {
         return Value(std::shared_ptr<CallableData>(new CallableData(kind, parts, label)));
     }
+
+    Value getVariable(const std::string& name) const {
+        for (size_t index = scopes_.size(); index > 0; --index) {
+            std::unordered_map<std::string, Value>::const_iterator it = scopes_[index - 1].vars.find(name);
+            if (it != scopes_[index - 1].vars.end()) {
+                return it->second;
+            }
+        }
+        runtimeError("unknown variable $" + name);
+    }
+
+    void storeVariable(const std::string& name, const Value& value) {
+        for (size_t index = scopes_.size(); index > 0; --index) {
+            std::unordered_map<std::string, Value>::iterator it = scopes_[index - 1].vars.find(name);
+            if (it != scopes_[index - 1].vars.end()) {
+                it->second = value;
+                return;
+            }
+        }
+        currentScope().vars[name] = value;
+    }
+
 
     std::vector<Value> copyArrayRange(const std::vector<Value>& items, size_t begin, size_t end) const {
         return std::vector<Value>(
             items.begin() + static_cast<std::vector<Value>::difference_type>(begin),
             items.begin() + static_cast<std::vector<Value>::difference_type>(end));
+    }
+
+    void pushScope() {
+        scopes_.push_back(ScopeFrame());
+    }
+
+    void popScope() {
+        scopes_.pop_back();
+    }
+
+    ScopeFrame& currentScope() {
+        return scopes_.back();
+    }
+
+    std::unordered_map<std::string, Value> captureVisibleVars() const {
+        std::unordered_map<std::string, Value> captured;
+        for (size_t index = 0; index < scopes_.size(); ++index) {
+            for (std::unordered_map<std::string, Value>::const_iterator it = scopes_[index].vars.begin();
+                 it != scopes_[index].vars.end();
+                 ++it) {
+                captured[it->first] = it->second;
+            }
+        }
+        return captured;
+    }
+
+
+    Value applyAssignmentOperator(const Value& left, int opCode, const Value& right) const {
+        switch (opCode) {
+            case BOP_ADD:
+                if (left.type == Value::STRING || right.type == Value::STRING) {
+                    return Value(left.toString() + right.toString());
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) + requireInt(right, binaryOpName(opCode)));
+            case BOP_SUB:
+                return Value(requireInt(left, binaryOpName(opCode)) - requireInt(right, binaryOpName(opCode)));
+            case BOP_MUL:
+                return Value(requireInt(left, binaryOpName(opCode)) * requireInt(right, binaryOpName(opCode)));
+            case BOP_DIV: {
+                const int divisor = requireInt(right, binaryOpName(opCode));
+                if (divisor == 0) {
+                    runtimeError("division by zero");
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) / divisor);
+            }
+            case BOP_MOD: {
+                const int divisor = requireInt(right, binaryOpName(opCode));
+                if (divisor == 0) {
+                    runtimeError("modulo by zero");
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) % divisor);
+            }
+            default:
+                break;
+        }
+        runtimeError("unknown assignment operator");
+    }
+
+    Value applyBinaryOperator(const Value& left, int opCode, const Value& right) const {
+        switch (opCode) {
+            case BOP_ADD:
+                if (left.type == Value::STRING || right.type == Value::STRING) {
+                    return Value(left.toString() + right.toString());
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) + requireInt(right, binaryOpName(opCode)));
+            case BOP_SUB:
+                return Value(requireInt(left, binaryOpName(opCode)) - requireInt(right, binaryOpName(opCode)));
+            case BOP_MUL:
+                return Value(requireInt(left, binaryOpName(opCode)) * requireInt(right, binaryOpName(opCode)));
+            case BOP_DIV: {
+                const int divisor = requireInt(right, binaryOpName(opCode));
+                if (divisor == 0) {
+                    runtimeError("division by zero");
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) / divisor);
+            }
+            case BOP_MOD: {
+                const int divisor = requireInt(right, binaryOpName(opCode));
+                if (divisor == 0) {
+                    runtimeError("modulo by zero");
+                }
+                return Value(requireInt(left, binaryOpName(opCode)) % divisor);
+            }
+            case BOP_EQ:
+                return Value(left.equals(right));
+            case BOP_NE:
+                return Value(!left.equals(right));
+            case BOP_GT:
+                return Value(requireInt(left, binaryOpName(opCode)) > requireInt(right, binaryOpName(opCode)));
+            case BOP_GTE:
+                return Value(requireInt(left, binaryOpName(opCode)) >= requireInt(right, binaryOpName(opCode)));
+            case BOP_LT:
+                return Value(requireInt(left, binaryOpName(opCode)) < requireInt(right, binaryOpName(opCode)));
+            case BOP_LTE:
+                return Value(requireInt(left, binaryOpName(opCode)) <= requireInt(right, binaryOpName(opCode)));
+            default:
+                break;
+        }
+        runtimeError("unknown binary operator");
+    }
+
+    Value invokeIdentifierCall(const std::string& name, const std::vector<Value>& args) {
+        if (name == "read_file") {
+            runtimeError("read_file is disabled in sandbox mode");
+        }
+
+        if (name == "Ok") {
+            if (args.size() != 1) runtimeError("Ok expects exactly one argument");
+            return Value::Ok(args[0]);
+        }
+        if (name == "Err") {
+            if (args.size() != 1) runtimeError("Err expects exactly one argument");
+            return Value::Err(args[0]);
+        }
+        if (name == "is_ok") {
+            if (args.size() != 1) runtimeError("is_ok expects exactly one argument");
+            return Value(args[0].type == Value::RESULT_OK);
+        }
+        if (name == "is_err") {
+            if (args.size() != 1) runtimeError("is_err expects exactly one argument");
+            return Value(args[0].type == Value::RESULT_ERR);
+        }
+        if (name == "unwrap") {
+            if (args.size() != 1) runtimeError("unwrap expects exactly one argument");
+            if (args[0].type == Value::RESULT_OK || args[0].type == Value::RESULT_ERR) {
+                return *(args[0].resultValue);
+            }
+            return args[0]; // If not wrapped, just return itself
+        }
+
+        if (name == "range") {
+            if (args.size() == 1) {
+                return makeRange(0, requireInt(args[0], "range"));
+            }
+            if (args.size() == 2) {
+                if (args[1].type == Value::NIL) {
+                    return makeRange(requireInt(args[0], "range"), 0, false, 1);
+                }
+                return makeRange(requireInt(args[0], "range"), requireInt(args[1], "range"));
+            }
+            if (args.size() == 3) {
+                if (args[1].type != Value::NIL) {
+                    runtimeError("range(start, nil, step) requires nil as second argument");
+                }
+                return makeRange(requireInt(args[0], "range"), 0, false, requireInt(args[2], "range"));
+            }
+            runtimeError("range expects (end), (start, end), (start, nil), or (start, nil, step)");
+        }
+
+        if (name == "str") {
+            if (args.size() != 1) {
+                runtimeError("str expects one argument");
+            }
+            return Value(args[0].toString());
+        }
+
+        if (name == "int") {
+            if (args.size() != 1) {
+                runtimeError("int expects one argument");
+            }
+            return Value(toInt(args[0]));
+        }
+
+        if (name == "bool") {
+            if (args.size() != 1) {
+                runtimeError("bool expects one argument");
+            }
+            return Value(args[0].isTruthy());
+        }
+
+        if (name == "type_of") {
+            if (args.size() != 1) {
+                runtimeError("type_of expects one argument");
+            }
+            return Value(args[0].typeName());
+        }
+
+        if (name == "input") {
+            if (args.size() > 1) {
+                runtimeError("input expects zero or one argument");
+            }
+            const std::string prompt = args.empty() ? std::string() : requireString(args[0], "input");
+            std::string line;
+            if (!inputHandler_(prompt, &line)) {
+                return Value();
+            }
+            return Value(line);
+        }
+
+        if (name == "bind") {
+            if (args.empty()) {
+                runtimeError("bind expects a callable and optional bound arguments");
+            }
+            expectCallableValue(args[0], "bind");
+            return makeNativeCallable(CallableData::BOUND, args, "bind");
+        }
+
+        if (name == "chain") {
+            if (args.empty()) {
+                runtimeError("chain expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "chain");
+            }
+            return makeNativeCallable(CallableData::CHAIN, args, "chain");
+        }
+
+        if (name == "branch") {
+            if (args.empty()) {
+                runtimeError("branch expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "branch");
+            }
+            return makeNativeCallable(CallableData::BRANCH, args, "branch");
+        }
+
+        if (name == "guard") {
+            if (args.size() < 2 || args.size() > 3) {
+                runtimeError("guard expects predicate, true route, and optional false route");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], "guard");
+            }
+            return makeNativeCallable(CallableData::GUARD, args, "guard");
+        }
+
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
+            compiledFlows_.find(name);
+        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
+            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, args, nullptr);
+        }
+
+        if (!args.empty()) {
+            std::vector<Value> stageArgs(args.begin() + 1, args.end());
+            return runNamedStage(name, args.front(), stageArgs);
+        }
+
+        runtimeError("unknown callable '" + name + "'");
+    }
+
+    static int builtinIdOfName(const std::string& name) {
+        switch (name.size()) {
+            case 2:
+                if (name == "eq") return 12;
+                else if (name == "ne") return 13;
+                else if (name == "gt") return 14;
+                else if (name == "lt") return 16;
+                else if (name == "at") return 72;
+                return 0;
+            case 3:
+                if (name == "add") return 5;
+                else if (name == "sub") return 6;
+                else if (name == "mul") return 7;
+                else if (name == "div") return 8;
+                else if (name == "mod") return 9;
+                else if (name == "min") return 10;
+                else if (name == "max") return 11;
+                else if (name == "gte") return 15;
+                else if (name == "lte") return 17;
+                else if (name == "not") return 18;
+                else if (name == "has") return 27;
+                else if (name == "sum") return 36;
+                else if (name == "zip") return 52;
+                else if (name == "tap") return 53;
+                else if (name == "map") return 54;
+                else if (name == "all") return 60;
+                else if (name == "any") return 66;
+                else if (name == "get") return 72;
+                else if (name == "set") return 73;
+                return 0;
+            case 4:
+                if (name == "into") return 1;
+                else if (name == "emit") return 2;
+                else if (name == "show") return 2;
+                else if (name == "drop") return 3;
+                else if (name == "give") return 4;
+                else if (name == "trim") return 21;
+                else if (name == "join") return 31;
+                else if (name == "take") return 39;
+                else if (name == "skip") return 40;
+                else if (name == "sort") return 43;
+                else if (name == "bind") return 48;
+                else if (name == "pmap") return 55;
+                else if (name == "find") return 58;
+                else if (name == "each") return 59;
+                else if (name == "scan") return 68;
+                else if (name == "size") return 69;
+                else if (name == "push") return 70;
+                else if (name == "keys") return 77;
+                else if (name == "pick") return 80;
+                else if (name == "omit") return 81;
+                else if (name == "head") return 86;
+                else if (name == "last") return 87;
+                return 0;
+            case 5:
+                if (name == "store") return 1;
+                else if (name == "print") return 2;
+                else if (name == "upper") return 22;
+                else if (name == "lower") return 23;
+                else if (name == "split") return 26;
+                else if (name == "slice") return 32;
+                else if (name == "chunk") return 47;
+                else if (name == "chain") return 49;
+                else if (name == "guard") return 51;
+                else if (name == "pluck") return 64;
+                else if (name == "where") return 65;
+                else if (name == "count") return 69;
+                else if (name == "field") return 72;
+                else if (name == "merge") return 82;
+                return 0;
+            case 6:
+                if (name == "choose") return 20;
+                else if (name == "concat") return 25;
+                else if (name == "repeat") return 35;
+                else if (name == "sum_by") return 37;
+                else if (name == "branch") return 50;
+                else if (name == "filter") return 57;
+                else if (name == "reduce") return 67;
+                else if (name == "append") return 70;
+                else if (name == "update") return 74;
+                else if (name == "insert") return 75;
+                else if (name == "remove") return 76;
+                else if (name == "values") return 78;
+                else if (name == "rename") return 83;
+                else if (name == "evolve") return 84;
+                else if (name == "derive") return 85;
+                else if (name == "window") return 88;
+                return 0;
+            case 7:
+                if (name == "default") return 19;
+                else if (name == "replace") return 30;
+                else if (name == "reverse") return 33;
+                else if (name == "flatten") return 38;
+                else if (name == "sort_by") return 45;
+                else if (name == "prepend") return 71;
+                else if (name == "entries") return 79;
+                return 0;
+            case 8:
+                if (name == "to_upper") return 22;
+                else if (name == "to_lower") return 23;
+                else if (name == "contains") return 27;
+                else if (name == "index_of") return 34;
+                else if (name == "distinct") return 41;
+                else if (name == "flat_map") return 56;
+                else if (name == "group_by") return 61;
+                else if (name == "index_by") return 62;
+                else if (name == "count_by") return 63;
+                return 0;
+            case 9:
+                if (name == "substring") return 24;
+                else if (name == "ends_with") return 29;
+                else if (name == "sort_desc") return 44;
+                return 0;
+            case 11:
+                if (name == "starts_with") return 28;
+                else if (name == "distinct_by") return 42;
+                return 0;
+            case 12:
+                if (name == "sort_desc_by") return 46;
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
+    Value runNamedStage(const std::string& name, const Value& input, const std::vector<Value>& args) {
+        const int builtinId = builtinIdOfName(name);
+
+        if (builtinId == 1) {
+            if (args.size() != 1) {
+                runtimeError("into(name) expects exactly one argument");
+            }
+            storeVariable(requireSymbol(args[0], name), input);
+            return input;
+        }
+
+        if (builtinId == 2) {
+            if (!args.empty()) {
+                runtimeError("emit expects no arguments");
+            }
+            if (isStreamValue(input)) {
+                outputHandler_(Value(materializeStream(input, name)).toString() + "\n");
+            } else {
+                outputHandler_(input.toString() + "\n");
+            }
+            return input;
+        }
+
+        if (builtinId == 3) {
+            if (!args.empty()) {
+                runtimeError("drop expects no arguments");
+            }
+            return Value();
+        }
+
+        if (builtinId == 4) {
+            if (!args.empty()) {
+                runtimeError("give stage expects no arguments");
+            }
+            if (callDepth_ == 0) {
+                runtimeError("give stage can only be used inside flow, stream/stage, or method bodies");
+            }
+            throw ReturnSignal(input);
+        }
+
+        if (builtinId == 5) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) + requireInt(args[0], name));
+        }
+
+        if (builtinId == 6) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) - requireInt(args[0], name));
+        }
+
+        if (builtinId == 7) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) * requireInt(args[0], name));
+        }
+
+        if (builtinId == 8) {
+            expectArity(args, 1, name);
+            const int divisor = requireInt(args[0], name);
+            if (divisor == 0) {
+                runtimeError("div does not allow zero");
+            }
+            return Value(requireInt(input, name) / divisor);
+        }
+
+        if (builtinId == 9) {
+            expectArity(args, 1, name);
+            const int divisor = requireInt(args[0], name);
+            if (divisor == 0) {
+                runtimeError("mod does not allow zero");
+            }
+            return Value(requireInt(input, name) % divisor);
+        }
+
+        if (builtinId == 10) {
+            expectArity(args, 1, name);
+            return Value(std::min(requireInt(input, name), requireInt(args[0], name)));
+        }
+
+        if (builtinId == 11) {
+            expectArity(args, 1, name);
+            return Value(std::max(requireInt(input, name), requireInt(args[0], name)));
+        }
+
+        if (builtinId == 12) {
+            expectArity(args, 1, name);
+            return Value(input.equals(args[0]));
+        }
+
+        if (builtinId == 13) {
+            expectArity(args, 1, name);
+            return Value(!input.equals(args[0]));
+        }
+
+        if (builtinId == 14) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) > requireInt(args[0], name));
+        }
+
+        if (builtinId == 15) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) >= requireInt(args[0], name));
+        }
+
+        if (builtinId == 16) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) < requireInt(args[0], name));
+        }
+
+        if (builtinId == 17) {
+            expectArity(args, 1, name);
+            return Value(requireInt(input, name) <= requireInt(args[0], name));
+        }
+
+        if (builtinId == 18) {
+            expectArity(args, 0, name);
+            return Value(!input.isTruthy());
+        }
+
+        if (builtinId == 19) {
+            expectArity(args, 1, name);
+            return input.type == Value::NIL ? args[0] : input;
+        }
+
+        if (builtinId == 20) {
+            expectArity(args, 2, name);
+            return input.isTruthy() ? args[0] : args[1];
+        }
+
+        if (builtinId == 21) {
+            expectArity(args, 0, name);
+            return Value(trimCopy(requireString(input, name)));
+        }
+
+        if (builtinId == 22) {
+            expectArity(args, 0, name);
+            return Value(toUpperCopy(requireString(input, name)));
+        }
+
+        if (builtinId == 23) {
+            expectArity(args, 0, name);
+            return Value(toLowerCopy(requireString(input, name)));
+        }
+
+        if (builtinId == 24) {
+            if (args.size() != 2) {
+                runtimeError("substring expects start and length");
+            }
+            const std::string text = requireString(input, name);
+            const int start = requireInt(args[0], name);
+            const int length = requireInt(args[1], name);
+            if (start < 0 || length < 0 || static_cast<size_t>(start) >= text.size()) {
+                return Value("");
+            }
+            return Value(text.substr(static_cast<size_t>(start), static_cast<size_t>(length)));
+        }
+
+        if (builtinId == 25) {
+            std::string output = input.toString();
+            for (size_t index = 0; index < args.size(); ++index) {
+                output += args[index].toString();
+            }
+            return Value(output);
+        }
+
+        if (builtinId == 26) {
+            expectArity(args, 1, name);
+            return Value(splitString(requireString(input, name), requireString(args[0], name)));
+        }
+
+        if (builtinId == 27) {
+            expectArity(args, 1, name);
+            return Value(containsValue(materializeStreamValue(input, name), args[0], name));
+        }
+
+        if (builtinId == 28) {
+            expectArity(args, 1, name);
+            return Value(stringsStartsWith(requireString(input, name), requireString(args[0], name)));
+        }
+
+        if (builtinId == 29) {
+            expectArity(args, 1, name);
+            return Value(stringsEndsWith(requireString(input, name), requireString(args[0], name)));
+        }
+
+        if (builtinId == 30) {
+            expectArity(args, 2, name);
+            const std::string from = requireString(args[0], name);
+            if (from.empty()) {
+                runtimeError("replace does not allow an empty search string");
+            }
+            return Value(replaceAll(requireString(input, name), from, requireString(args[1], name)));
+        }
+
+        if (builtinId == 31) {
+            expectArity(args, 1, name);
+            const Value base = materializeStreamValue(input, name);
+            if (base.type != Value::ARRAY) {
+                runtimeError("join expects an array input");
+            }
+            return Value(joinArray(base.asArray(), requireString(args[0], name)));
+        }
+
+        if (builtinId == 32) {
+            expectArity(args, 2, name);
+            return sliceValue(materializeStreamValue(input, name), requireInt(args[0], name), requireInt(args[1], name), name);
+        }
+
+        if (builtinId == 33) {
+            expectArity(args, 0, name);
+            return reverseValue(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 34) {
+            expectArity(args, 1, name);
+            return Value(indexOfValue(materializeStreamValue(input, name), args[0], name));
+        }
+
+        if (builtinId == 35) {
+            expectArity(args, 1, name);
+            return repeatValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
+        }
+
+        if (builtinId == 36) {
+            expectArity(args, 0, name);
+            if (isStreamValue(input)) {
+                int total = 0;
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    total += requireInt(item, name);
+                }
+                return Value(total);
+            }
+            return Value(sumValue(input, name));
+        }
+
+        if (builtinId == 37) {
+            expectArity(args, 1, name);
+            return Value(sumByField(materializeStreamValue(input, name), args[0], name));
+        }
+
+        if (builtinId == 38) {
+            expectArity(args, 0, name);
+            return flattenValue(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 39) {
+            expectArity(args, 1, name);
+            if (isStreamValue(input)) {
+                return Value(takeFromStream(input, requireInt(args[0], name), name));
+            }
+            return takeValue(input, requireInt(args[0], name), name);
+        }
+
+        if (builtinId == 40) {
+            expectArity(args, 1, name);
+            if (isStreamValue(input)) {
+                const int count = requireInt(args[0], name);
+                if (count < 0) {
+                    runtimeError("stage '" + name + "' does not allow negative counts");
+                }
+                StreamData::Operation operation(StreamData::SKIP);
+                operation.count = count;
+                return appendStreamOperation(input, operation, name);
+            }
+            return skipValue(input, requireInt(args[0], name), name);
+        }
+
+        if (builtinId == 41) {
+            expectArity(args, 0, name);
+            return distinctValue(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 42) {
+            expectArity(args, 1, name);
+            return distinctByField(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 43) {
+            expectArity(args, 0, name);
+            return sortValue(materializeStreamValue(input, name), false, name);
+        }
+
+        if (builtinId == 44) {
+            expectArity(args, 0, name);
+            return sortValue(materializeStreamValue(input, name), true, name);
+        }
+
+        if (builtinId == 45) {
+            expectArity(args, 1, name);
+            return sortByField(materializeStreamValue(input, name), args[0], false, name);
+        }
+
+        if (builtinId == 46) {
+            expectArity(args, 1, name);
+            return sortByField(materializeStreamValue(input, name), args[0], true, name);
+        }
+
+        if (builtinId == 47) {
+            expectArity(args, 1, name);
+            return chunkValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
+        }
+
+        if (builtinId == 48) {
+            if (args.empty()) {
+                runtimeError("bind expects a callable and optional bound arguments");
+            }
+            expectCallableValue(args[0], name);
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return bindCallable(input, args[0], extra, name);
+        }
+
+        if (builtinId == 49) {
+            if (args.empty()) {
+                runtimeError("chain expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], name);
+            }
+            return chainCallables(input, args, name);
+        }
+
+        if (builtinId == 50) {
+            if (args.empty()) {
+                runtimeError("branch expects at least one callable");
+            }
+            for (size_t index = 0; index < args.size(); ++index) {
+                expectCallableValue(args[index], name);
+            }
+            return branchCallables(input, args, name);
+        }
+
+        if (builtinId == 51) {
+            if (args.size() < 2 || args.size() > 3) {
+                runtimeError("guard expects predicate, true route, and optional false route");
+            }
+            expectCallableValue(args[0], name);
+            expectCallableValue(args[1], name);
+            const Value* onFalse = nullptr;
+            if (args.size() == 3) {
+                expectCallableValue(args[2], name);
+                onFalse = &args[2];
+            }
+            return guardCallable(input, args[0], args[1], onFalse, name);
+        }
+
+        if (builtinId == 52) {
+            expectArity(args, 1, name);
+            return zipValue(materializeStreamValue(input, name), materializeStreamValue(args[0], name), name);
+        }
+
+        if (builtinId == 53) {
+            if (args.empty()) {
+                runtimeError("tap expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                expectCallableValue(args[0], name);
+                StreamData::Operation operation(StreamData::TAP);
+                operation.callable = args[0];
+                operation.extraArgs = extra;
+                return appendStreamOperation(input, operation, name);
+            }
+            return tapValue(input, args[0], extra, name);
+        }
+
+        if (builtinId == 54) {
+            if (args.empty()) {
+                runtimeError("map expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                expectCallableValue(args[0], name);
+                StreamData::Operation operation(StreamData::MAP);
+                operation.callable = args[0];
+                operation.extraArgs = extra;
+                return appendStreamOperation(input, operation, name);
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("map expects an array input");
+            }
+            std::vector<Value> result;
+            const std::vector<Value>& items = input.asArray();
+            result.reserve(items.size());
+            for (size_t index = 0; index < items.size(); ++index) {
+                result.push_back(invokePipeCallable(args[0], items[index], extra, name));
+            }
+            return Value(result);
+        }
+
+        if (builtinId == 55) {
+            if (args.empty()) {
+                runtimeError("pmap expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return parallelMapValue(input, args[0], extra, name);
+        }
+
+        if (builtinId == 56) {
+            if (args.empty()) {
+                runtimeError("flat_map expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                return flatMapValue(Value(materializeStream(input, name)), args[0], extra, name);
+            }
+            return flatMapValue(input, args[0], extra, name);
+        }
+
+        if (builtinId == 57) {
+            if (args.empty()) {
+                runtimeError("filter expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                expectCallableValue(args[0], name);
+                StreamData::Operation operation(StreamData::FILTER);
+                operation.callable = args[0];
+                operation.extraArgs = extra;
+                return appendStreamOperation(input, operation, name);
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("filter expects an array input");
+            }
+            std::vector<Value> result;
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    result.push_back(items[index]);
+                }
+            }
+            return Value(result);
+        }
+
+        if (builtinId == 58) {
+            if (args.empty()) {
+                runtimeError("find expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    if (invokePipeCallable(args[0], item, extra, name).isTruthy()) {
+                        return item;
+                    }
+                }
+                return Value();
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("find expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return items[index];
+                }
+            }
+            return Value();
+        }
+
+        if (builtinId == 59) {
+            if (args.empty()) {
+                runtimeError("each expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    invokePipeCallable(args[0], item, extra, name);
+                }
+                return input;
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("each expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                invokePipeCallable(args[0], items[index], extra, name);
+            }
+            return input;
+        }
+
+        if (builtinId == 60) {
+            if (args.empty()) {
+                runtimeError("all expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    if (!invokePipeCallable(args[0], item, extra, name).isTruthy()) {
+                        return Value(false);
+                    }
+                }
+                return Value(true);
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("all expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (!invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return Value(false);
+                }
+            }
+            return Value(true);
+        }
+
+        if (builtinId == 61) {
+            if (args.empty()) {
+                runtimeError("group_by expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            return groupByValue(materializeStreamValue(input, name), args[0], extra, name);
+        }
+
+        if (builtinId == 62) {
+            expectArity(args, 1, name);
+            return indexByField(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 63) {
+            expectArity(args, 1, name);
+            return countByField(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 64) {
+            expectArity(args, 1, name);
+            return pluckValues(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 65) {
+            expectArity(args, 2, name);
+            return whereEntries(materializeStreamValue(input, name), args[0], args[1], name);
+        }
+
+        if (builtinId == 66) {
+            if (args.empty()) {
+                runtimeError("any expects a callable");
+            }
+            std::vector<Value> extra(args.begin() + 1, args.end());
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    if (invokePipeCallable(args[0], item, extra, name).isTruthy()) {
+                        return Value(true);
+                    }
+                }
+                return Value(false);
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("any expects an array input");
+            }
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                if (invokePipeCallable(args[0], items[index], extra, name).isTruthy()) {
+                    return Value(true);
+                }
+            }
+            return Value(false);
+        }
+
+        if (builtinId == 67) {
+            if (args.size() < 2) {
+                runtimeError("reduce expects callable and initial value");
+            }
+            if (isStreamValue(input)) {
+                Value acc = args[1];
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, item), name);
+                }
+                return acc;
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("reduce expects an array input");
+            }
+            Value acc = args[1];
+            const std::vector<Value>& items = input.asArray();
+            for (size_t index = 0; index < items.size(); ++index) {
+                acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, items[index]), name);
+            }
+            return acc;
+        }
+
+        if (builtinId == 68) {
+            if (args.size() < 2) {
+                runtimeError("scan expects callable and initial value");
+            }
+            if (isStreamValue(input)) {
+                Value acc = args[1];
+                std::vector<Value> history;
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, item), name);
+                    history.push_back(acc);
+                }
+                return Value(history);
+            }
+            if (input.type != Value::ARRAY) {
+                runtimeError("scan expects an array input");
+            }
+            Value acc = args[1];
+            std::vector<Value> history;
+            const std::vector<Value>& items = input.asArray();
+            history.reserve(items.size());
+            for (size_t index = 0; index < items.size(); ++index) {
+                acc = invokePipeCallable(args[0], acc, std::vector<Value>(1, items[index]), name);
+                history.push_back(acc);
+            }
+            return Value(history);
+        }
+
+        if (builtinId == 69) {
+            expectArity(args, 0, name);
+            if (isStreamValue(input)) {
+                int total = 0;
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                while (cursor.next(this, &item, name)) {
+                    ++total;
+                }
+                return Value(total);
+            }
+            return Value(containerSize(input, name));
+        }
+
+        if (builtinId == 70) {
+            expectArity(args, 1, name);
+            const Value base = materializeStreamValue(input, name);
+            if (base.type != Value::ARRAY) {
+                runtimeError("append expects an array input");
+            }
+            std::vector<Value> result = base.asArray();
+            result.push_back(args[0]);
+            return Value(result);
+        }
+
+        if (builtinId == 71) {
+            expectArity(args, 1, name);
+            const Value base = materializeStreamValue(input, name);
+            if (base.type != Value::ARRAY) {
+                runtimeError("prepend expects an array input");
+            }
+            std::vector<Value> result;
+            const std::vector<Value>& items = base.asArray();
+            result.reserve(items.size() + 1);
+            result.push_back(args[0]);
+            result.insert(result.end(), items.begin(), items.end());
+            return Value(result);
+        }
+
+        if (builtinId == 72) {
+            expectArity(args, 1, name);
+            return readIndexedValue(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 73) {
+            expectArity(args, 2, name);
+            return writeIndexedValue(materializeStreamValue(input, name), args[0], args[1], name);
+        }
+
+        if (builtinId == 74) {
+            if (args.size() < 2) {
+                runtimeError("update expects key/index and callable");
+            }
+            std::vector<Value> extra(args.begin() + 2, args.end());
+            return updateIndexedValue(materializeStreamValue(input, name), args[0], args[1], extra, name);
+        }
+
+        if (builtinId == 75) {
+            expectArity(args, 2, name);
+            return insertIndexedValue(materializeStreamValue(input, name), requireInt(args[0], name), args[1], name);
+        }
+
+        if (builtinId == 76) {
+            expectArity(args, 1, name);
+            return removeIndexedValue(materializeStreamValue(input, name), args[0], name);
+        }
+
+        if (builtinId == 77) {
+            expectArity(args, 0, name);
+            return readKeys(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 78) {
+            expectArity(args, 0, name);
+            return readValues(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 79) {
+            expectArity(args, 0, name);
+            return readEntries(materializeStreamValue(input, name), name);
+        }
+
+        if (builtinId == 80) {
+            if (args.empty()) {
+                runtimeError("pick expects at least one key");
+            }
+            return pickEntries(materializeStreamValue(input, name), args, name);
+        }
+
+        if (builtinId == 81) {
+            if (args.empty()) {
+                runtimeError("omit expects at least one key");
+            }
+            return omitEntries(materializeStreamValue(input, name), args, name);
+        }
+
+        if (builtinId == 82) {
+            expectArity(args, 1, name);
+            return mergeEntries(materializeStreamValue(input, name), materializeStreamValue(args[0], name), name);
+        }
+
+        if (builtinId == 83) {
+            expectArity(args, 2, name);
+            return renameEntry(materializeStreamValue(input, name), args[0], args[1], name);
+        }
+
+        if (builtinId == 84) {
+            if (args.size() < 2) {
+                runtimeError("evolve expects field name and callable");
+            }
+            std::vector<Value> extra(args.begin() + 2, args.end());
+            return evolveField(materializeStreamValue(input, name), args[0], args[1], extra, name);
+        }
+
+        if (builtinId == 85) {
+            if (args.size() < 2) {
+                runtimeError("derive expects field name and callable");
+            }
+            std::vector<Value> extra(args.begin() + 2, args.end());
+            return deriveField(materializeStreamValue(input, name), args[0], args[1], extra, name);
+        }
+
+        if (builtinId == 86) {
+            expectArity(args, 0, name);
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                return cursor.next(this, &item, name) ? item : Value();
+            }
+            return readBoundary(input, true, name);
+        }
+
+        if (builtinId == 87) {
+            expectArity(args, 0, name);
+            if (isStreamValue(input)) {
+                StreamCursorState cursor = makeStreamCursor(input, name);
+                Value item;
+                Value last;
+                bool hasAny = false;
+                while (cursor.next(this, &item, name)) {
+                    last = item;
+                    hasAny = true;
+                }
+                return hasAny ? last : Value();
+            }
+            return readBoundary(input, false, name);
+        }
+
+        if (builtinId == 88) {
+            expectArity(args, 1, name);
+            return windowValue(materializeStreamValue(input, name), requireInt(args[0], name), name);
+        }
+
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledStageIt =
+            compiledStages_.find(name);
+        if (compiledStageIt != compiledStages_.end() && compiledStageIt->second.get() != nullptr) {
+            return BytecodeVirtualMachine::runStage(this, *compiledStageIt->second, input, args);
+        }
+
+        std::unordered_map<std::string, std::shared_ptr<CompiledFunction> >::const_iterator compiledFlowIt =
+            compiledFlows_.find(name);
+        if (compiledFlowIt != compiledFlows_.end() && compiledFlowIt->second.get() != nullptr) {
+            std::vector<Value> flowArgs;
+            flowArgs.reserve(args.size() + 1);
+            flowArgs.push_back(input);
+            flowArgs.insert(flowArgs.end(), args.begin(), args.end());
+            return BytecodeVirtualMachine::runFlow(this, *compiledFlowIt->second, flowArgs, nullptr);
+        }
+
+        if (isDirectBuiltinCallableName(name)) {
+            std::vector<Value> callArgs;
+            callArgs.reserve(args.size() + 1);
+            callArgs.push_back(input);
+            callArgs.insert(callArgs.end(), args.begin(), args.end());
+            return invokeIdentifierCall(name, callArgs);
+        }
+
+        runtimeError("unknown stage '" + name + "'");
+    }
+
+    Value invokeCallableValue(const Value& callable, const std::vector<Value>& args, const std::string& context) {
+        if (callable.type == Value::STRING) {
+            return invokeIdentifierCall(callable.stringValue, args);
+        }
+
+        if (callable.type == Value::CALLABLE && callable.callableValue.get() != nullptr) {
+            return invokeAnonymousCallable(*callable.callableValue, args);
+        }
+
+        runtimeError(context + " target must be a callable name or pipe value");
+    }
+
+    Value invokePipeCallable(const Value& callable,
+                             const Value& input,
+                             const std::vector<Value>& args,
+                             const std::string& context) {
+        if (callable.type == Value::STRING) {
+            return runNamedStage(callable.stringValue, input, args);
+        }
+
+        if (callable.type == Value::CALLABLE && callable.callableValue.get() != nullptr) {
+            std::vector<Value> callArgs;
+            callArgs.reserve(args.size() + 1);
+            callArgs.push_back(input);
+            callArgs.insert(callArgs.end(), args.begin(), args.end());
+            return invokeAnonymousCallable(*callable.callableValue, callArgs);
+        }
+
+        runtimeError(context + " expects a callable name or pipe value");
     }
 
     Value bindCallable(const Value& input,
@@ -4886,8 +4513,6 @@ struct BytecodeInstruction {
           text(),
           constant(),
           names(),
-          expr(nullptr),
-          statement(nullptr),
           function() {
     }
 
@@ -4898,8 +4523,6 @@ struct BytecodeInstruction {
     std::string text;
     Value constant;
     std::vector<std::string> names;
-    const Expr* expr;
-    const Statement* statement;
     std::shared_ptr<CompiledFunction> function;
 };
 
@@ -5889,6 +5512,7 @@ private:
             compileExpr(binary->right.get(), context);
             BytecodeInstruction instruction(BytecodeInstruction::BINARY_OP);
             instruction.text = binary->op;
+            instruction.operand = binaryOpCodeOfName(binary->op);
             emit(context, instruction);
             return;
         }
@@ -5904,6 +5528,7 @@ private:
                     compileExpr(assign->value.get(), context);
                     BytecodeInstruction combine(BytecodeInstruction::ASSIGN_OP);
                     combine.text = assign->op;
+                    combine.operand = binaryOpCodeOfName(assign->op);
                     emit(context, combine);
                 }
                 BytecodeInstruction store(BytecodeInstruction::STORE_VAR_KEEP);
@@ -6148,6 +5773,29 @@ Value BytecodeVirtualMachine::runInlinePipeExpr(Interpreter* runtime,
                        false);
 }
 
+template <typename Action>
+Value runSafePipe(Interpreter* runtime, const Value& value, const Action& action) {
+    (void)runtime;
+    if (value.type == Value::RESULT_ERR) {
+        return value;
+    }
+
+    Value current = value;
+    if (current.type == Value::RESULT_OK && current.resultValue.get() != nullptr) {
+        current = *current.resultValue;
+    }
+
+    try {
+        Value result = action(current);
+        if (result.type != Value::RESULT_OK && result.type != Value::RESULT_ERR) {
+            result = Value::Ok(result);
+        }
+        return result;
+    } catch (const std::runtime_error& error) {
+        return Value::Err(Value(std::string(error.what())));
+    }
+}
+
 Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
                                           const CompiledFunction& function,
                                           const std::vector<Value>& args,
@@ -6164,6 +5812,7 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
 
     struct FrameState {
         FrameState() : stack(), loops(), scopeDepth(0) {
+            stack.reserve(16);
         }
 
         std::vector<Value> stack;
@@ -6171,18 +5820,20 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
         int scopeDepth;
     };
 
-    const std::string functionLabel = function.kind == CompiledFunction::FLOW ? "flow '" + function.name + "'" :
-                                      function.kind == CompiledFunction::STAGE ? "stage '" + function.name + "'" :
-                                      function.kind == CompiledFunction::PIPE ? "pipe" :
-                                      function.kind == CompiledFunction::INLINE_EXPR ? "inline expression" :
-                                      "script";
-
     if (function.kind != CompiledFunction::SCRIPT && args.size() != function.params.size()) {
+        const std::string functionLabel = function.kind == CompiledFunction::FLOW ? "flow '" + function.name + "'" :
+                                          function.kind == CompiledFunction::STAGE ? "stage '" + function.name + "'" :
+                                          function.kind == CompiledFunction::PIPE ? "pipe" :
+                                          function.kind == CompiledFunction::INLINE_EXPR ? "inline expression" :
+                                          "script";
         runtime->runtimeError(functionLabel + " expected " + std::to_string(function.params.size()) +
                               " arguments but received " + std::to_string(args.size()));
     }
 
-    const Value defaultReturn = (function.kind == CompiledFunction::STAGE && stageInput != nullptr) ? *stageInput : Value();
+    Value defaultReturn;
+    if (function.kind == CompiledFunction::STAGE && stageInput != nullptr) {
+        defaultReturn = *stageInput;
+    }
 
     FrameState frame;
     bool pushedFunctionScope = false;
@@ -6247,7 +5898,7 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
         if (frame.stack.empty()) {
             runtime->runtimeError("bytecode stack underflow");
         }
-        const Value value = frame.stack.back();
+        Value value = std::move(frame.stack.back());
         frame.stack.pop_back();
         return value;
     };
@@ -6267,29 +5918,9 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
         }
     };
 
-    const auto runSafePipe = [runtime](const Value& value,
-                                       const std::function<Value(const Value&)>& action) -> Value {
-        if (value.type == Value::RESULT_ERR) {
-            return value;
-        }
-
-        Value current = value;
-        if (current.type == Value::RESULT_OK && current.resultValue.get() != nullptr) {
-            current = *current.resultValue;
-        }
-
-        try {
-            Value result = action(current);
-            if (result.type != Value::RESULT_OK && result.type != Value::RESULT_ERR) {
-                result = Value::Ok(result);
-            }
-            return result;
-        } catch (const std::runtime_error& error) {
-            return Value::Err(Value(std::string(error.what())));
-        }
-    };
-
     size_t ip = 0;
+    bool returning_ = false;
+    Value returnValue_;
     try {
         while (ip < function.code.size()) {
             const BytecodeInstruction& instruction = function.code[ip];
@@ -6338,13 +5969,13 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
                     case BytecodeInstruction::BINARY_OP: {
                         const Value right = popValue();
                         const Value left = popValue();
-                        frame.stack.push_back(runtime->applyBinaryOperator(left, instruction.text, right));
+                        frame.stack.push_back(runtime->applyBinaryOperator(left, instruction.operand, right));
                         break;
                     }
                     case BytecodeInstruction::ASSIGN_OP: {
                         const Value right = popValue();
                         const Value left = popValue();
-                        frame.stack.push_back(runtime->applyAssignmentOperator(left, instruction.text, right));
+                        frame.stack.push_back(runtime->applyAssignmentOperator(left, instruction.operand, right));
                         break;
                     }
                     case BytecodeInstruction::GET_MEMBER: {
@@ -6421,22 +6052,20 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
                     case BytecodeInstruction::PIPE_NAMED: {
                         const std::vector<Value> stageArgs = popArgs(instruction.operand);
                         const Value input = popValue();
-                        const std::function<Value(const Value&)> action =
-                            [runtime, &instruction, &stageArgs](const Value& current) -> Value {
-                                return runtime->runNamedStage(instruction.text, current, stageArgs);
-                            };
-                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        const auto action = [runtime, &instruction, &stageArgs](const Value& current) -> Value {
+                            return runtime->runNamedStage(instruction.text, current, stageArgs);
+                        };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(runtime, input, action) : action(input));
                         break;
                     }
                     case BytecodeInstruction::PIPE_VALUE: {
                         const std::vector<Value> stageArgs = popArgs(instruction.operand);
                         const Value callee = popValue();
                         const Value input = popValue();
-                        const std::function<Value(const Value&)> action =
-                            [runtime, &callee, &stageArgs](const Value& current) -> Value {
-                                return runtime->invokePipeCallable(callee, current, stageArgs, "pipeline target");
-                            };
-                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        const auto action = [runtime, &callee, &stageArgs](const Value& current) -> Value {
+                            return runtime->invokePipeCallable(callee, current, stageArgs, "pipeline target");
+                        };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(runtime, input, action) : action(input));
                         break;
                     }
                     case BytecodeInstruction::PIPE_INLINE_EXPR: {
@@ -6444,11 +6073,10 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
                             runtime->runtimeError("compiled pipe expression has no body");
                         }
                         const Value input = popValue();
-                        const std::function<Value(const Value&)> action =
-                            [runtime, &instruction](const Value& current) -> Value {
-                                return runInlinePipeExpr(runtime, *instruction.function, current);
-                            };
-                        frame.stack.push_back(instruction.flag ? runSafePipe(input, action) : action(input));
+                        const auto action = [runtime, &instruction](const Value& current) -> Value {
+                            return runInlinePipeExpr(runtime, *instruction.function, current);
+                        };
+                        frame.stack.push_back(instruction.flag ? runSafePipe(runtime, input, action) : action(input));
                         break;
                     }
                     case BytecodeInstruction::LOOP_ENTER: {
@@ -6485,7 +6113,10 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
                             runtime->runtimeError("give can only be used inside flow, stream/stage, or method bodies");
                         }
                         popScopesTo(0);
-                        throw ReturnSignal(value);
+                        returnValue_ = value;
+                        returning_ = true;
+                        ip = function.code.size();
+                        break;
                     }
                     case BytecodeInstruction::POP:
                         popValue();
@@ -6516,6 +6147,9 @@ Value BytecodeVirtualMachine::runFunction(Interpreter* runtime,
     }
 
     popScopesTo(0);
+    if (returning_) {
+        return returnValue_;
+    }
     return defaultReturn;
 }
 
@@ -6695,6 +6329,29 @@ std::string readAllStdin() {
         throw std::runtime_error("Input Error: failed while reading stdin");
     }
     return buffer.str();
+}
+
+std::string readAllFile(const std::string& path) {
+    std::ifstream stream(path.c_str(), std::ios::in | std::ios::binary);
+    if (!stream.is_open()) {
+        throw std::runtime_error("Input Error: cannot open file '" + path + "'");
+    }
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    if (stream.bad()) {
+        throw std::runtime_error("Input Error: failed while reading file '" + path + "'");
+    }
+    const std::string source = buffer.str();
+    if (source.empty()) {
+        // Distinguish an empty file from a directory: opening a directory succeeds
+        // on some platforms, but reading from it yields nothing.
+        std::ifstream probe(path.c_str(), std::ios::in | std::ios::binary);
+        probe.seekg(0, std::ios::end);
+        if (probe.fail()) {
+            throw std::runtime_error("Input Error: '" + path + "' is not a readable file");
+        }
+    }
+    return source;
 }
 
 int digitWidth(size_t value) {
@@ -7713,11 +7370,32 @@ int dumpStdinBytecode() {
     }
 }
 
+int runFileOnce(const std::string& path) {
+    try {
+        return runSourceOnce(readAllFile(path));
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
+int dumpFileBytecode(const std::string& path) {
+    try {
+        return dumpSourceBytecode(readAllFile(path));
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+
 void printUsage(const char* executable) {
     std::cout << "Usage:\n";
     std::cout << "  " << executable << "                  Launch the terminal editor\n";
+    std::cout << "  " << executable << " <file.ae>        Compile and run a script file\n";
     std::cout << "  " << executable << " --stdin          Compile and run source from stdin\n";
     std::cout << "  " << executable << " --dump-bytecode  Compile stdin and print custom bytecode\n";
+    std::cout << "  " << executable << " <file.ae> --dump-bytecode\n";
+    std::cout << "                   Compile a script file and print custom bytecode\n";
 }
 
 }
@@ -7733,6 +7411,7 @@ int main(int argc, char** argv) {
 
         CliMode mode = CLI_MODE_DEFAULT;
         bool sawPositionalArgument = false;
+        std::string scriptPath;
         for (int index = 1; index < argc; ++index) {
             const std::string argument = argv[index];
             if (argument == "--help" || argument == "-h") {
@@ -7760,11 +7439,23 @@ int main(int argc, char** argv) {
                 printUsage(argv[0]);
                 return 1;
             }
+            if (sawPositionalArgument) {
+                std::cerr << "Usage Error: only one script path is accepted\n";
+                printUsage(argv[0]);
+                return 1;
+            }
             sawPositionalArgument = true;
+            scriptPath = argument;
         }
 
         if (mode == CLI_MODE_STDIN) {
             return runStdinOnce(sawPositionalArgument);
+        }
+        if (sawPositionalArgument) {
+            if (mode == CLI_MODE_DUMP_BYTECODE) {
+                return dumpFileBytecode(scriptPath);
+            }
+            return runFileOnce(scriptPath);
         }
         if (mode == CLI_MODE_DUMP_BYTECODE) {
             return dumpStdinBytecode();
